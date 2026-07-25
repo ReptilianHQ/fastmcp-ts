@@ -15,7 +15,7 @@ FastMCP 1.0 speaks both MCP protocol generations: the 2025 legacy era and the 20
 ## Installation
 
 ```bash
-npm install @reptilianhq/fastmcp-ts@https://github.com/ReptilianHQ/fastmcp-ts/releases/download/v1.0.0-rc.0-reptilian.0/reptilianhq-fastmcp-ts-1.0.0-rc.0-reptilian.0.tgz
+npm install @reptilianhq/fastmcp-ts@https://github.com/ReptilianHQ/fastmcp-ts/releases/download/v1.0.0-rc.0-reptilian.1/reptilianhq-fastmcp-ts-1.0.0-rc.0-reptilian.1.tgz
 ```
 
 ---

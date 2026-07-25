@@ -1,4 +1,10 @@
-# @prefecthq/fastmcp-ts
+# @reptilianhq/fastmcp-ts
+
+## 1.0.0-rc.0-reptilian.1
+
+### Patch Changes
+
+- Reject inherited object-property names in `staticTokenVerifier` unless they are explicitly configured tokens.
 
 ## 1.0.0-rc.0
 

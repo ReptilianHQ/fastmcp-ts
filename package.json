@@ -1,6 +1,6 @@
 {
   "name": "@reptilianhq/fastmcp-ts",
-  "version": "1.0.0-rc.0-reptilian.0",
+  "version": "1.0.0-rc.0-reptilian.1",
   "description": "Public ReptilianHQ repack of the upstream FastMCP TypeScript 1.0 release candidate",
   "type": "module",
   "exports": {

@@ -6,11 +6,11 @@ on:
       version:
         description: Exact package version expected in package.json
         required: true
-        default: 1.0.0-rc.0-reptilian.0
+        default: 1.0.0-rc.0-reptilian.1
       tag:
         description: GitHub prerelease tag
         required: true
-        default: v1.0.0-rc.0-reptilian.0
+        default: v1.0.0-rc.0-reptilian.1
       confirm_release:
         description: Publish or update the public GitHub prerelease
         required: true
@@ -30,14 +30,14 @@ jobs:
     if: ${{ inputs.confirm_release && github.repository == 'ReptilianHQ/fastmcp-ts' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
 
       - name: Upgrade npm
-        run: npm install --global npm@11
+        run: npm install --global npm@11.18.0
 
       - name: Verify release identity
         env:
@@ -76,11 +76,26 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
+          if tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha 2>/dev/null); then
+            tag_type=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.type)
+            if [ "$tag_type" = "tag" ]; then
+              tag_type=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha" --jq .object.type)
+              tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha" --jq .object.sha)
+            fi
+            if [ "$tag_type" != "commit" ] || [ "$tag_sha" != "$GITHUB_SHA" ]; then
+              echo "Refusing to publish assets: $RELEASE_TAG resolves to $tag_type $tag_sha, not commit $GITHUB_SHA" >&2
+              exit 1
+            fi
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$RELEASE_TAG" \
+              -f sha="$GITHUB_SHA" >/dev/null
+          fi
+
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release-assets/*.tgz release-assets/SHA256SUMS --clobber
           else
             gh release create "$RELEASE_TAG" \
-              --target "$GITHUB_SHA" \
               --title "FastMCP $RELEASE_VERSION" \
               --generate-notes \
               --prerelease \
