@@ -1,7 +1,7 @@
 {
-  "name": "@prefecthq/fastmcp-ts",
-  "version": "0.1.0",
-  "description": "🏎️  The official FastMCP TypeScript library - build MCP servers and clients, fast 🏎️",
+  "name": "@reptilianhq/fastmcp-ts",
+  "version": "1.0.0-rc.0-reptilian.0",
+  "description": "Public ReptilianHQ repack of the upstream FastMCP TypeScript 1.0 release candidate",
   "type": "module",
   "exports": {
     "./server": {
@@ -43,8 +43,14 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "NOTICE"
   ],
+  "publishConfig": {
+    "access": "public",
+    "tag": "rc"
+  },
   "engines": {
     "node": ">=22"
   },
@@ -61,14 +67,10 @@
     "conformance:client": "node tests/conformance/run-client.mjs",
     "docs:dev": "cd docs && npx --yes mint@latest dev",
     "docs:api": "typedoc && node scripts/generate-api-nav.mjs",
-    "docs:links": "cd docs && npx --yes mint@latest broken-links",
-    "changeset": "changeset",
-    "version-packages": "changeset version",
-    "release": "changeset publish"
+    "docs:links": "cd docs && npx --yes mint@latest broken-links"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
-    "@changesets/cli": "^2.31.0",
     "@google/genai": "^1.50.1",
     "@playwright/test": "^1.61.1",
     "@types/node": "^22.0.0",
@@ -92,7 +94,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/PrefectHQ/fastmcp-ts.git"
+    "url": "git+https://github.com/ReptilianHQ/fastmcp-ts.git"
   },
   "keywords": [
     "mcp",
@@ -107,9 +109,9 @@
   "author": "prefecthq",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/PrefectHQ/fastmcp-ts/issues"
+    "url": "https://github.com/ReptilianHQ/fastmcp-ts/issues"
   },
-  "homepage": "https://github.com/PrefectHQ/fastmcp-ts#readme",
+  "homepage": "https://github.com/ReptilianHQ/fastmcp-ts#readme",
   "peerDependencies": {
     "@anthropic-ai/sdk": ">=0.39",
     "@google/genai": ">=0.7",
