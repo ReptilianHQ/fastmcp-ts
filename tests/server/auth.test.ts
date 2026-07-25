@@ -159,6 +159,16 @@ describe('Server — Authentication', () => {
         ['__proto__']: { scopes: ['read'] },
       })
       await expect(explicitlyConfigured.verify('__proto__')).resolves.toMatchObject({ scopes: ['read'] })
+
+      const inheritedMap = Object.create({ inheritedToken: { scopes: ['admin'] } }) as Record<
+        string,
+        { scopes: string[] }
+      >
+      await expect(staticTokenVerifier(inheritedMap).verify('inheritedToken')).rejects.toThrow('Unknown token')
+
+      const nullPrototypeMap = Object.create(null) as Record<string, { scopes: string[] }>
+      nullPrototypeMap.ownToken = { scopes: ['read'] }
+      await expect(staticTokenVerifier(nullPrototypeMap).verify('ownToken')).resolves.toMatchObject({ scopes: ['read'] })
     })
 
     it('staticTokenVerifier rejects a token whose expiresAt is in the past', async () => {
