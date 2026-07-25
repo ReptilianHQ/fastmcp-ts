@@ -1,38 +1,27 @@
 # Releasing the ReptilianHQ RC repack
 
-`@reptilianhq/fastmcp-ts` republishes a verified upstream FastMCP release
-candidate from the public `ReptilianHQ/fastmcp-ts` fork. Runtime source changes
-must remain separate from repack-only releases and must be described explicitly.
+`@reptilianhq/fastmcp-ts` is distributed only as a public GitHub Release from
+the `ReptilianHQ/fastmcp-ts` fork. It is not published to npm.
 
 ## Publish workflow
 
-Run **Publish Reptilian RC** from GitHub Actions and provide the exact version
-already committed in `package.json`. The workflow verifies the package and
-repository identity, installs from the lockfile, typechecks, runs the complete
-test suite and publish-time artifact checks, then publishes publicly with the
-`rc` npm dist-tag and provenance.
+Run **Publish GitHub RC** from GitHub Actions with:
 
-The workflow refuses to run outside `ReptilianHQ/fastmcp-ts` and requires the
-operator to enable the `confirm_publish` input.
+- the exact package version committed in `package.json`
+- the matching `v<version>` GitHub tag
+- `confirm_release` enabled
 
-## npm authentication
+The workflow verifies package, tag, and repository identity; installs from the
+lockfile; typechecks; runs the complete test suite and publish-time artifact
+checks; packs the npm-compatible tarball; writes `SHA256SUMS`; and creates or
+updates a public GitHub prerelease using the repository `GITHUB_TOKEN`.
 
-For the first publication of a brand-new npm package, add a granular npm
-automation token with publish access as the repository Actions secret
-`NPM_TOKEN`. After the package exists, configure npm Trusted Publishing for:
-
-- GitHub organization: `ReptilianHQ`
-- repository: `fastmcp-ts`
-- workflow filename: `release.yml`
-- allowed action: `npm publish`
-
-Once Trusted Publishing succeeds, delete `NPM_TOKEN`. The workflow's
-`id-token: write` permission and exact repository metadata enable npm's OIDC
-authentication and automatic provenance.
+No npm account, npm token, repository secret, or trusted-publisher setup is
+used. Rerunning the workflow replaces the release assets for the same tag.
 
 ## Versioning
 
 Repack versions append a ReptilianHQ identifier to the upstream candidate, for
-example `1.0.0-rc.0-reptilian.0`. Never move `latest`; publish these builds only
-under `rc`. Once the equivalent upstream package is available, consumers should
-move back to `@prefecthq/fastmcp-ts`.
+example `1.0.0-rc.0-reptilian.0`. Runtime changes must remain separate from an
+upstream repack and must be documented explicitly. Once the equivalent upstream
+package is available, consumers should move back to `@prefecthq/fastmcp-ts`.

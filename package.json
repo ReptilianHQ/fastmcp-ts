@@ -47,10 +47,6 @@
     "LICENSE",
     "NOTICE"
   ],
-  "publishConfig": {
-    "access": "public",
-    "tag": "rc"
-  },
   "engines": {
     "node": ">=22"
   },

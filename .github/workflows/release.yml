@@ -1,4 +1,4 @@
-name: Publish Reptilian RC
+name: Publish GitHub RC
 
 on:
   workflow_dispatch:
@@ -7,8 +7,12 @@ on:
         description: Exact package version expected in package.json
         required: true
         default: 1.0.0-rc.0-reptilian.0
-      confirm_publish:
-        description: Publish this version publicly to npm under the rc tag
+      tag:
+        description: GitHub prerelease tag
+        required: true
+        default: v1.0.0-rc.0-reptilian.0
+      confirm_release:
+        description: Publish or update the public GitHub prerelease
         required: true
         type: boolean
         default: false
@@ -18,13 +22,12 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
-  id-token: write
+  contents: write
 
 jobs:
   publish:
-    name: Verify and publish
-    if: ${{ inputs.confirm_publish && github.repository == 'ReptilianHQ/fastmcp-ts' }}
+    name: Verify and publish GitHub release
+    if: ${{ inputs.confirm_release && github.repository == 'ReptilianHQ/fastmcp-ts' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +35,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          registry-url: https://registry.npmjs.org
 
       - name: Upgrade npm
         run: npm install --global npm@11
@@ -40,11 +42,13 @@ jobs:
       - name: Verify release identity
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_TAG: ${{ inputs.tag }}
         run: |
           node --input-type=module -e '
             import packageJson from "./package.json" with { type: "json" };
             if (packageJson.name !== "@reptilianhq/fastmcp-ts") throw new Error(`unexpected package: ${packageJson.name}`);
             if (packageJson.version !== process.env.EXPECTED_VERSION) throw new Error(`expected ${process.env.EXPECTED_VERSION}, found ${packageJson.version}`);
+            if (process.env.EXPECTED_TAG !== `v${packageJson.version}`) throw new Error(`tag ${process.env.EXPECTED_TAG} does not match v${packageJson.version}`);
             if (packageJson.repository?.url !== "git+https://github.com/ReptilianHQ/fastmcp-ts.git") throw new Error("repository provenance mismatch");
           '
 
@@ -60,7 +64,26 @@ jobs:
       - name: Verify publish artifact
         run: npm run prepublishOnly
 
-      - name: Publish public RC
-        run: npm publish --access public --tag rc --provenance
+      - name: Pack release artifact
+        run: |
+          mkdir -p release-assets
+          npm pack --pack-destination release-assets
+          sha256sum release-assets/*.tgz > release-assets/SHA256SUMS
+
+      - name: Publish GitHub prerelease
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/*.tgz release-assets/SHA256SUMS --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "FastMCP $RELEASE_VERSION" \
+              --generate-notes \
+              --prerelease \
+              release-assets/*.tgz \
+              release-assets/SHA256SUMS
+          fi
