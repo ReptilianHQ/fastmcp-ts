@@ -5,10 +5,10 @@ export function staticTokenVerifier(
 ): TokenVerifier {
   return {
     async verify(token: string): Promise<AccessToken> {
-      const entry = map[token]
-      if (!entry) {
+      if (!Object.hasOwn(map, token)) {
         throw new Error('Unknown token')
       }
+      const entry = map[token]
       if (entry.expiresAt !== undefined && entry.expiresAt < Math.floor(Date.now() / 1000)) {
         throw new Error('Token has expired')
       }
