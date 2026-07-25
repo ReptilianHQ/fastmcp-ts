@@ -76,21 +76,26 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          if tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha 2>/dev/null); then
             tag_type=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.type)
-            tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)
             if [ "$tag_type" = "tag" ]; then
               tag_type=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha" --jq .object.type)
               tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha" --jq .object.sha)
             fi
             if [ "$tag_type" != "commit" ] || [ "$tag_sha" != "$GITHUB_SHA" ]; then
-              echo "Refusing to replace assets: $RELEASE_TAG resolves to $tag_type $tag_sha, not commit $GITHUB_SHA" >&2
+              echo "Refusing to publish assets: $RELEASE_TAG resolves to $tag_type $tag_sha, not commit $GITHUB_SHA" >&2
               exit 1
             fi
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$RELEASE_TAG" \
+              -f sha="$GITHUB_SHA" >/dev/null
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release-assets/*.tgz release-assets/SHA256SUMS --clobber
           else
             gh release create "$RELEASE_TAG" \
-              --target "$GITHUB_SHA" \
               --title "FastMCP $RELEASE_VERSION" \
               --generate-notes \
               --prerelease \
