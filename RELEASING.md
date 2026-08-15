@@ -13,8 +13,8 @@ Run **Publish ReptilianHQ GitHub release** from GitHub Actions with:
 
 The workflow verifies package, tag, and repository identity; installs from the
 lockfile; typechecks; runs the complete test suite and publish-time artifact
-checks; packs the npm-compatible tarball; writes `SHA256SUMS`; and creates or
-updates a public GitHub release using the repository `GITHUB_TOKEN`.
+checks; packs the npm-compatible tarball; writes `SHA256SUMS`; and creates a
+public GitHub release using the repository `GITHUB_TOKEN`.
 
 No npm account, npm token, repository secret, or trusted-publisher setup is
 used. The package is marked private to block npm publication. Release assets
