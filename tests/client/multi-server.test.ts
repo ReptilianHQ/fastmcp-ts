@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { z } from 'zod/v4'
-import { FastMCP } from 'fastmcp-ts/server'
+import { FastMCP, ToolResult } from 'fastmcp-ts/server'
 import { Client, MultiServerClient } from 'fastmcp-ts/client'
 import type { TextResourceContents } from "@modelcontextprotocol/server";
 
@@ -207,6 +207,24 @@ describe('Client — Multi-server', () => {
       const result = await client.callToolRaw('err_fail')
       expect(result.isError).toBe(true)
     })
+
+    it('callToolRaw() preserves metadata and extension fields', async () => {
+      const mcp = new FastMCP({ name: 'extended', version: '1.0.0' })
+      mcp.tool(
+        { name: 'result', description: 'extended result', input: z.object({}) },
+        () =>
+          new ToolResult({
+            content: [{ type: 'text', text: 'extended' }],
+            _meta: { 'com.example/trace': 'trace-123' },
+            'com.example/result': { display: 'card' },
+          }),
+      )
+      await using client = await MultiServerClient.connect({ mcpServers: { extended: mcp } })
+
+      const result = await client.callToolRaw('extended_result')
+      expect(result._meta).toMatchObject({ 'com.example/trace': 'trace-123' })
+      expect(result['com.example/result']).toEqual({ display: 'card' })
+    })
   })
 
   // -------------------------------------------------------------------------
@@ -328,10 +346,25 @@ describe('Client — Multi-server', () => {
   // -------------------------------------------------------------------------
 
   describe('versionNegotiation', () => {
-    it('with no versionNegotiation, every server negotiates legacy era', async () => {
+    it('with no versionNegotiation, in-process entries land legacy — the auto default probes over the 2025-era InMemoryTransport pairing and falls back', async () => {
+      // Both entries are in-process FastMCP instances (McpServerLike). The
+      // default is { mode: 'auto' }, but in-process connections route through
+      // InMemoryTransport unless the modern era is pinned, so the probe falls
+      // back and each sub-client negotiates legacy.
       const a = makeServerA()
       const b = makeServerB()
       await using client = await MultiServerClient.connect({ mcpServers: { a, b } })
+      expect(client.getProtocolEra('a')).toBe('legacy')
+      expect(client.getProtocolEra('b')).toBe('legacy')
+    })
+
+    it("explicit { mode: 'legacy' } negotiates legacy on every server with no probe", async () => {
+      const a = makeServerA()
+      const b = makeServerB()
+      await using client = await MultiServerClient.connect(
+        { mcpServers: { a, b } },
+        { versionNegotiation: { mode: 'legacy' } },
+      )
       expect(client.getProtocolEra('a')).toBe('legacy')
       expect(client.getProtocolEra('b')).toBe('legacy')
     })

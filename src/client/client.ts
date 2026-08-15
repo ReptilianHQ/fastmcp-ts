@@ -1,5 +1,6 @@
 import { UnauthorizedError, Client as SdkClient, LOG_LEVEL_META_KEY } from "@modelcontextprotocol/client";
 import type {
+  ClientCapabilities,
   RequestOptions as SdkRequestOptions,
   McpSubscription,
   VersionNegotiationOptions,
@@ -8,12 +9,21 @@ import type {
   InputRequiredOptions,
   ResponseCacheStore,
   Transport,
+  Implementation,
+  ServerCapabilities,
 } from "@modelcontextprotocol/client";
 import { BearerAuth, OAuth } from './auth.js'
+import { buildClientCapabilities } from './capabilities.js'
 import type { AsyncHeaderAuth } from './auth.js'
 import type { ClientHandlers, ListChangedHandler, ProgressHandler, ResourceUpdateHandler } from './handlers.js'
 import { defaultLogHandler, defaultProgressHandler } from './handlers.js'
 import type { CallToolOptions, IClient, RequestOptions } from './interfaces.js'
+import type {
+  ClientDefaultOptions,
+  ClientOptions,
+  RootInput,
+  RootsValue,
+} from './options.js'
 import type {
   CallToolResult,
   CompletionResult,
@@ -28,6 +38,7 @@ import type {
   Root,
   Tool,
 } from './results.js'
+import { normalizeCallToolResult } from './results.js'
 import type { ClientTransportInput, McpConfig } from './transports.js'
 import { resolveTransport } from './transports.js'
 import type { MultiServerOptions } from './multi-server.js'
@@ -45,109 +56,6 @@ export class ToolCallError extends Error {
     this.name = 'ToolCallError'
     this.content = content
   }
-}
-
-// ---------------------------------------------------------------------------
-// Options
-// ---------------------------------------------------------------------------
-
-export interface ClientDefaultOptions {
-  /** Global fallback timeout in seconds for all requests. */
-  timeout?: number
-  tool?: { timeout?: number }
-  resource?: { timeout?: number }
-  prompt?: { timeout?: number }
-}
-
-/** A single element of the roots option: a URI string or a full Root object. */
-export type RootInput = string | Root
-
-/**
- * Static list of roots, or an async callback invoked on each roots/list request.
- * URI strings are normalised to file:// URIs automatically; relative paths are
- * resolved against process.cwd().
- */
-export type RootsValue = RootInput[] | (() => RootInput[] | Promise<RootInput[]>)
-
-export interface ClientOptions {
-  /**
-   * Authentication to attach to HTTP requests.
-   * A plain string is treated as a Bearer token.
-   */
-  auth?: BearerAuth | OAuth | AsyncHeaderAuth | string
-  handlers?: ClientHandlers
-  /**
-   * Filesystem roots to advertise to the server.
-   * Accepts a static array of strings / Root objects, or an async callback
-   * invoked on each roots/list request (useful for dynamic root sets).
-   */
-  roots?: RootsValue
-  /**
-   * When true (default), the MCP initialize handshake is performed
-   * automatically inside connect().
-   */
-  autoInitialize?: boolean
-  defaultOptions?: ClientDefaultOptions
-  /**
-   * Opt-in protocol version negotiation (protocol revision 2026-07-28 and later).
-   * The default is `'legacy'`: connect() runs the plain 2025 sequence, byte-identical
-   * to today's behavior (no probe, no new headers). Pass `{ mode: 'auto' }` to probe
-   * with `server/discover` and use the modern era when the server supports it
-   * (falling back to legacy otherwise), or `{ mode: { pin: '2026-07-28' } }` to
-   * require the modern era outright. See `getProtocolEra()` to read the negotiated
-   * result after connecting.
-   */
-  versionNegotiation?: VersionNegotiationOptions
-  /**
-   * A cached era verdict from a previous connection to the same server, so
-   * connect() can skip the `server/discover` probe entirely. Takes precedence
-   * over `versionNegotiation`. `{ kind: 'modern', discover }` adopts a prior
-   * `DiscoverResult` with zero round trips; `{ kind: 'legacy' }` skips the probe
-   * and runs the plain legacy `initialize` handshake. Freshness is the caller's
-   * responsibility — a stale modern verdict fails loudly at the first request; a
-   * stale legacy verdict succeeds silently forever. Reuse only within one
-   * authorization context.
-   */
-  prior?: PriorDiscovery
-  /**
-   * Multi-round-trip auto-fulfilment (protocol revision 2026-07-28). On the
-   * modern era, servers obtain client input (elicitation, sampling, roots) by
-   * answering a request with an `input_required` result instead of a
-   * server→client request. By default the client fulfils these automatically
-   * through the same `handlers.sampling`/`handlers.elicitation` callbacks,
-   * retrying up to `maxRounds` times. Set `autoFulfill: false` for manual mode.
-   * Has no effect on legacy-era connections. Passed through verbatim to the SDK
-   * client.
-   */
-  inputRequired?: InputRequiredOptions
-  /**
-   * The response-cache store backing cacheable results (SEP-2549 `ttlMs`/
-   * `cacheScope` hints on `listTools`/`listResources`/`listResourceTemplates`/
-   * `listPrompts`/`readResource`). Defaults to a fresh in-memory store per
-   * client (the SDK's own default) when omitted. Passed through verbatim.
-   */
-  responseCacheStore?: ResponseCacheStore
-  /**
-   * Opaque per-principal identifier for response-cache writes whose
-   * server-reported `cacheScope` is `'private'`. Set this to a stable identity
-   * of the authorization context (e.g. the auth subject) when one
-   * `responseCacheStore` backs several principals. Passed through verbatim.
-   */
-  cachePartition?: string
-  /**
-   * TTL (ms) applied when a cacheable result arrives without a `ttlMs` field.
-   * Default `0` (never served from cache, but still stored). Passed through
-   * verbatim.
-   */
-  defaultCacheTtlMs?: number
-  /**
-   * Allow the deprecated SSE transport when a target URL's path indicates SSE
-   * (e.g. ends in `/sse`). Default `false` — such URLs throw a clear error
-   * pointing at Streamable HTTP and this flag, rather than silently connecting
-   * over a transport the MCP SDK itself marks `@deprecated`. When enabled, a
-   * one-time deprecation warning is logged via `console.warn`.
-   */
-  legacySSE?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -190,8 +98,9 @@ export class Client implements IClient {
   private readonly _handlers: Required<Omit<ClientHandlers, OptionalHandlerKeys>> &
     Pick<ClientHandlers, OptionalHandlerKeys>
   private readonly _roots: (() => Promise<Root[]>) | undefined
+  private readonly _capabilities: ClientCapabilities
   private readonly _autoInitialize: boolean
-  private readonly _versionNegotiation: VersionNegotiationOptions | undefined
+  private readonly _versionNegotiation: VersionNegotiationOptions
   private readonly _prior: PriorDiscovery | undefined
   private readonly _inputRequired: InputRequiredOptions | undefined
   private readonly _responseCacheStore: ResponseCacheStore | undefined
@@ -218,8 +127,13 @@ export class Client implements IClient {
       onPromptsListChanged: options?.handlers?.onPromptsListChanged,
     }
     this._roots = options?.roots ? normalizeRootsOption(options.roots) : undefined
+    this._capabilities = buildClientCapabilities(options?.capabilities, {
+      sampling: this._handlers.sampling !== undefined,
+      elicitation: this._handlers.elicitation !== undefined,
+      rootsListChanged: this._roots === undefined ? undefined : true,
+    })
     this._autoInitialize = options?.autoInitialize ?? true
-    this._versionNegotiation = options?.versionNegotiation
+    this._versionNegotiation = options?.versionNegotiation ?? { mode: 'auto' }
     this._prior = options?.prior
     this._inputRequired = options?.inputRequired
     this._responseCacheStore = options?.responseCacheStore
@@ -261,9 +175,9 @@ export class Client implements IClient {
     const sdkClient = new SdkClient(
       { name: 'fastmcp-ts', version: '1.0.0' },
       {
-        capabilities: this._buildCapabilities(),
+        capabilities: this._capabilities,
         listChanged: this._buildListChangedConfig(),
-        ...(this._versionNegotiation ? { versionNegotiation: this._versionNegotiation } : {}),
+        versionNegotiation: this._versionNegotiation,
         ...(this._inputRequired ? { inputRequired: this._inputRequired } : {}),
         ...(this._responseCacheStore ? { responseCacheStore: this._responseCacheStore } : {}),
         ...(this._cachePartition !== undefined ? { cachePartition: this._cachePartition } : {}),
@@ -305,8 +219,13 @@ export class Client implements IClient {
         await this._finishAuth(transport, callbackParams)
         // The original transport is already started and cannot be reconnected;
         // build a fresh one for the authenticated attempt. It reads the tokens
-        // finishAuth stored in the auth provider.
-        const retry = await resolveTransport(this._input, this._auth)
+        // finishAuth stored in the auth provider. Pass the same resolution
+        // options as the primary attempt so the retry keeps the SSE opt-in and
+        // the era-negotiation mode.
+        const retry = await resolveTransport(this._input, this._auth, {
+          legacySSE: this._legacySSE,
+          versionNegotiation: this._versionNegotiation,
+        })
         if (retry.beforeConnect) await retry.beforeConnect()
         this._transport = retry.transport
         await sdkClient.connect(retry.transport)
@@ -417,6 +336,38 @@ export class Client implements IClient {
     return this._sdkClient?.getProtocolEra()
   }
 
+  /**
+   * The connected server's self-reported identity (`serverInfo`: name, version,
+   * and optional title / websiteUrl / icons), when it identified itself. On a
+   * legacy connection it comes from the `initialize` result, where it is
+   * required. On a modern (2026-07-28) connection it comes from the
+   * `server/discover` result's metadata — FastMCP servers advertise it there,
+   * but an anonymous modern server may omit it, leaving this `undefined`.
+   * `undefined` before connect().
+   */
+  getServerInfo(): Implementation | undefined {
+    return this._sdkClient?.getServerVersion()
+  }
+
+  /**
+   * The server's `instructions` string, when the server provided one — from
+   * the legacy `initialize` result or, on a modern (2026-07-28) connection,
+   * from the `server/discover` result. `undefined` otherwise and before
+   * connect().
+   */
+  getInstructions(): string | undefined {
+    return this._sdkClient?.getInstructions()
+  }
+
+  /**
+   * The capabilities the server advertised during connection — on the legacy
+   * `initialize` result, or on the `server/discover` result for a modern
+   * (2026-07-28) connection. `undefined` before connect().
+   */
+  getServerCapabilities(): ServerCapabilities | undefined {
+    return this._sdkClient?.getServerCapabilities()
+  }
+
   // -------------------------------------------------------------------------
   // Tools (IToolsClient)
   // -------------------------------------------------------------------------
@@ -462,11 +413,7 @@ export class Client implements IClient {
     const result = await this._reauthRetry(() =>
       this._sdk().callTool({ name, arguments: args ?? {}, ...this._metaParams() }, sdkOptions),
     )
-    return {
-      content: result.content as ContentBlock[],
-      structuredContent: (result.structuredContent as TData | undefined) ?? null,
-      isError: result.isError === true,
-    }
+    return normalizeCallToolResult<TData>(result)
   }
 
   // -------------------------------------------------------------------------
@@ -829,14 +776,6 @@ export class Client implements IClient {
       }
     }
     return sdkOptions
-  }
-
-  private _buildCapabilities() {
-    return {
-      ...(this._handlers.sampling ? { sampling: { tools: {} } } : {}),
-      ...(this._handlers.elicitation ? { elicitation: {} } : {}),
-      ...(this._roots ? { roots: { listChanged: true } } : {}),
-    }
   }
 
   private _buildListChangedConfig() {

@@ -4,10 +4,16 @@ export type {
   RunOptions,
   ServerAddress,
   ToolConfig,
+  ToolAnnotations,
   OAuthConfig,
 } from './FastMCP'
-// Re-exported for FastMCPOptions.eventBus implementers (multi-process deployments).
-export type { ServerEventBus } from '@modelcontextprotocol/server'
+export type { CustomRouteConfig, CustomRouteHandler, HealthOptions } from './customRoutes'
+// Re-exported for fetch-native integrations and FastMCPOptions.eventBus implementers.
+export type {
+  AuthInfo,
+  McpHandlerRequestOptions,
+  ServerEventBus,
+} from '@modelcontextprotocol/server'
 export { Image, File, ToolResult } from './tool'
 export { ResourceResult } from './resource'
 export type { ResourceConfig, ResourceAnnotations } from './resource'
@@ -55,7 +61,10 @@ export {
   VersionFilter,
 } from './transform'
 export type { AccessToken, TokenVerifier } from './auth/types'
+export type { RequestVerifier } from './auth/types'
 export { AuthorizationError } from './auth/types'
+export type { HttpRequestContext } from './httpContext'
+export { forwardableHeaders } from './httpContext'
 export type { AuthCheck } from './auth/authorization'
 export { requireScopes } from './auth/authorization'
 export { multiAuth } from './auth/multiAuth'
@@ -68,6 +77,24 @@ export { oauthProxy } from './auth/oauth/proxy'
 export type { OAuthProxyOptions } from './auth/oauth/proxy'
 export { createProxy } from './proxy'
 export type { ProxyTransport } from './proxy'
+export { createOpenAPIServer } from './openapi'
+export type {
+  OpenAPIServerOptions,
+  OpenAPIClientOptions,
+  RouteMap,
+  RouteMapFn,
+  ComponentFn,
+  MCPType,
+  HTTPRoute,
+  HttpMethod,
+  ParameterInfo,
+  RequestBodyInfo,
+  ResponseInfo,
+  OpenAPIComponent,
+  OpenAPIToolComponent,
+  OpenAPIResourceComponent,
+  OpenAPIResourceTemplateComponent,
+} from './openapi'
 
 // Apps
 export { FastMCPApp, GenerativeUI } from './apps'

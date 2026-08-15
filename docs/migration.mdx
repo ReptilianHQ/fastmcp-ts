@@ -5,7 +5,7 @@ description: "Upgrade a 0.x server or client to FastMCP 1.0 — what breaks, wha
 icon: "arrow-up-right-dots"
 ---
 
-FastMCP 1.0 adds the 2026-07-28 modern protocol era alongside the 2025 protocol your 0.x code already speaks. The upgrade is designed so it does not rewrite your server or client. A 1.0 server serves both eras with no configuration, and a 1.0 client defaults to the legacy era — byte-identical to 2025 — until you opt into the modern one. Most 0.x code compiles and runs against 1.0 unchanged. [Protocol eras](/concepts/protocol-eras) installs that model; this page is the mechanical upgrade path.
+FastMCP 1.0 adds the 2026-07-28 modern protocol era alongside the 2025 protocol your 0.x code already speaks. The upgrade is designed so it does not rewrite your server or client. A 1.0 server serves both eras with no configuration, and a 1.0 client negotiates automatically: one `server/discover` probe at connect, the modern era when the server offers it, and the legacy 2025 handshake otherwise. Against a 0.x-only server that fallback keeps the wire behavior you have today, and `versionNegotiation: { mode: 'legacy' }` opts a client out of the probe entirely. Most 0.x code compiles and runs against 1.0 unchanged. [Protocol eras](/concepts/protocol-eras) installs that model; this page is the mechanical upgrade path.
 
 The breaks fall into two groups. A small set applies the moment you upgrade, whatever era you speak. A larger set takes effect only once you opt a client into the modern era. Clear the first group to get onto 1.0, then adopt the modern era deliberately.
 
@@ -113,11 +113,11 @@ If you register `CachingMiddleware` with its default cache key, 1.0 changes what
 
 ## Modern era
 
-Everything below changes behavior only when a client negotiates the modern era. A client that keeps the default legacy era sees none of it, so you can adopt the modern era one connection at a time.
+Everything below changes behavior only when a client negotiates the modern era, or when the server itself runs legacy HTTP in [stateless mode](/servers/running#stateless-mode) — that server-side switch trades away the same session-dependent behavior on legacy traffic too. A client that lands on the legacy era — because the server offers no modern era under the default auto negotiation, or because you passed `{ mode: 'legacy' }` — sees none of this against an ordinary sessionful server, so you can adopt the modern era one connection at a time.
 
 ### Negotiation defaults
 
-The library `Client` defaults to the legacy era on every transport. `Client.connect(url)` runs the plain 2025 sequence — no probe, no new headers — exactly as in 0.x. You opt into the modern era per connection through `versionNegotiation`. `{ mode: 'auto' }` probes the server with `server/discover` and uses the modern era when the server offers it, falling back to legacy otherwise. `{ mode: { pin: '2026-07-28' } }` requires it and throws `-32022` if the server cannot speak it. After connecting, `getProtocolEra()` reports the negotiated era.
+The library `Client` defaults to `{ mode: 'auto' }` on every transport. `Client.connect(url)` probes the server once with `server/discover`, uses the modern era when the server offers it, and falls back to the legacy 2025 handshake otherwise — so against a 0.x-only server the connection behaves as it did before, after one probe the server answers with method-not-found. The probe is stall-safe: over stdio it runs against a sibling process and a timeout falls back to legacy; over HTTP a timeout rejects with a typed error. To skip the probe and keep the exact 2025 connect sequence, pass `{ mode: 'legacy' }`. `{ mode: { pin: '2026-07-28' } }` requires the modern era and throws `-32022` if the server cannot speak it. After connecting, `getProtocolEra()` reports the negotiated era.
 
 ```typescript 0.x
 import { Client } from '@prefecthq/fastmcp-ts/client'
@@ -128,19 +128,22 @@ const client = await Client.connect('http://localhost:3000')
 ```typescript 1.0
 import { Client } from '@prefecthq/fastmcp-ts/client'
 
-// Opt into the modern era; fall back to legacy when the server is 0.x-only.
-const client = await Client.connect('http://localhost:3000', {
-  versionNegotiation: { mode: 'auto' },
-})
+// Default: modern when the server offers it, legacy fallback when it is 0.x-only.
+const client = await Client.connect('http://localhost:3000')
 
 client.getProtocolEra()   // 'modern' or 'legacy'
+
+// Opt out: byte-identical to the 0.x connect sequence, no probe.
+const legacyClient = await Client.connect('http://localhost:3000', {
+  versionNegotiation: { mode: 'legacy' },
+})
 ```
 
-The `fastmcp` CLI layers its own defaults on top: an HTTP `--url` negotiates automatically, a spawned stdio server stays legacy until you pass `--modern`, and `--pin <version>` forces an exact era on any transport. That auto-for-HTTP behavior belongs to the CLI, not to the `Client` class. The [CLI reference](/cli) has the flags.
+The `fastmcp` CLI follows the same default on every transport. `--legacy` opts a connection out of the probe, `--pin <version>` forces an exact era on any transport, and `--modern` is now a deprecated no-op. The [CLI reference](/cli) has the flags.
 
 ### Session state
 
-`ctx.getState`, `ctx.setState`, and `ctx.deleteState` keep working on stdio and on legacy HTTP, where a session persists them across requests. A modern HTTP request has no session, so each call runs statelessly against a fresh store. Rather than drop a write silently, the accessors throw a pointed error on a modern HTTP request, and the message names the request-scoped replacements.
+`ctx.getState`, `ctx.setState`, and `ctx.deleteState` keep working on stdio and on legacy HTTP, where a session persists them across requests, as long as the server is sessionful, which is the default. A modern HTTP request has no session, and neither does a legacy HTTP server running in [stateless mode](/servers/running#stateless-mode), so each such call runs statelessly against a fresh store. Rather than drop a write silently, the accessors throw a pointed error, and the message names the request-scoped replacements.
 
 A handler that relied on session state and must serve modern HTTP clients moves the value off the session. For anything durable or portable, mint a server-side handle and thread it back as a tool argument — the pattern works identically on every transport.
 
@@ -172,7 +175,7 @@ For state that only needs to survive the rounds of one input-required flow, use 
 
 ### Server-initiated requests
 
-0.x handlers called the client back mid-execution with `ctx.sample`, `ctx.elicit`, and `ctx.listRoots`. These are deprecated and era-gated in 1.0. They still work on a legacy connection. A modern request has no server-to-client channel, so they throw an error that names `inputRequired(...)` as the replacement.
+0.x handlers called the client back mid-execution with `ctx.sample`, `ctx.elicit`, and `ctx.listRoots`. These are deprecated and era-gated in 1.0. They still work on a sessionful legacy connection, which is the default. A modern request has no server-to-client channel, and neither does a legacy HTTP server running in [stateless mode](/servers/running#stateless-mode), so both throw an error that names `inputRequired(...)` as the replacement.
 
 Rewrite an interactive handler to ask by returning. Return `inputRequired(...)` with the requests the client must fulfil; the client fulfils them and retries the same call, this time carrying the answers on `ctx.inputResponses`. A handler written this way serves both eras from one code path, because a built-in legacy shim turns the return value into a real server-to-client request for 2025-era clients.
 
@@ -213,6 +216,8 @@ server.tool({ name: 'deleteFiles', description: 'Delete files after confirmation
 })
 ```
 
+On a stateless server this rewrite trades one limit for a narrower one. The shim that turns `inputRequired({ inputRequests })` into a server-to-client push needs the same live session `ctx.elicit()` needed, so a stateless server fails it the same way. Drop `inputRequests` and return only `requestState`, though, and the handler keeps working — not because the client retries anything, but because the SDK's legacy shim re-enters the handler itself, server-side, inside the same HTTP request, pausing 250ms between rounds instead of pushing a request over a session it doesn't have. That narrower form is the one multi-round-trip pattern a stateless server supports, and it has real limits worth knowing before you lean on it: the shim gives up after `inputRequired.maxRounds` rounds (8 by default), each round holds the request open at least 250ms longer, and a handler that needs to wait on something external between rounds — a person, a webhook — has no way to signal that and will simply spin to a rounds-exceeded failure instead. [Input required](/concepts/input-required#one-handler-both-eras) covers the mechanism and a worked example.
+
 [Input required](/concepts/input-required) covers the return-value pattern, reading responses, and carrying signed state across rounds.
 
 ## New capabilities
@@ -226,6 +231,7 @@ server.tool({ name: 'deleteFiles', description: 'Delete files after confirmation
 - **Modern client hardening** — `versionNegotiation` and `getProtocolEra()` control the era, and OAuth gains client-ID metadata documents (`clientMetadataUrl`, CIMD) and RFC 9207 `iss` validation ([client auth](/clients/auth)).
 - **Cache hints** — `FastMCPOptions.cacheHints` attaches per-operation `ttlMs` and `cacheScope` to cacheable results (SEP-2549), so a modern client can reuse them; FastMCP fills conservative defaults for the operations you omit ([caching](/concepts/caching)).
 - **DNS-rebinding protection** — the `dnsRebinding` option, covered above ([running a server](/servers/running)).
+- **Stateless legacy HTTP** — `RunOptions.stateless` or `FASTMCP_STATELESS_HTTP` serves each legacy HTTP request from a fresh server, with no session, for a load-balanced or serverless deployment where consecutive requests can reach different instances. Off by default, and it trades away session state and server-initiated requests on the requests it serves ([running a server](/servers/running#stateless-mode)).
 
 ## Conformance
 
