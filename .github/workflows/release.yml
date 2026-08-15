@@ -27,7 +27,7 @@ permissions:
 jobs:
   publish:
     name: Verify and publish GitHub release
-    if: ${{ inputs.confirm_release && github.repository == 'ReptilianHQ/fastmcp-ts' }}
+    if: ${{ inputs.confirm_release && github.repository == 'ReptilianHQ/fastmcp-ts' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -93,12 +93,13 @@ jobs:
           fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release-assets/*.tgz release-assets/SHA256SUMS --clobber
-          else
-            gh release create "$RELEASE_TAG" \
-              --title "FastMCP $RELEASE_VERSION" \
-              --generate-notes \
-              --prerelease \
-              release-assets/*.tgz \
-              release-assets/SHA256SUMS
+            echo "Refusing to replace immutable release assets for $RELEASE_TAG" >&2
+            exit 1
           fi
+
+          gh release create "$RELEASE_TAG" \
+            --title "FastMCP $RELEASE_VERSION" \
+            --generate-notes \
+            --prerelease \
+            release-assets/*.tgz \
+            release-assets/SHA256SUMS

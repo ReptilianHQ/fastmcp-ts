@@ -17,7 +17,8 @@ checks; packs the npm-compatible tarball; writes `SHA256SUMS`; and creates or
 updates a public GitHub release using the repository `GITHUB_TOKEN`.
 
 No npm account, npm token, repository secret, or trusted-publisher setup is
-used. Rerunning the workflow replaces the release assets for the same tag.
+used. The package is marked private to block npm publication. Release assets
+are immutable; rerunning the workflow for an existing release fails.
 
 ## Versioning
 

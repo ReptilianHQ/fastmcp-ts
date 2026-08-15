@@ -1,6 +1,7 @@
 {
   "name": "@reptilianhq/fastmcp-ts",
   "version": "1.5.0-reptilian.0",
+  "private": true,
   "description": "Public ReptilianHQ repack of upstream FastMCP TypeScript 1.5.0 with static-token hardening",
   "type": "module",
   "exports": {
