@@ -1,21 +1,20 @@
 # fastmcp-ts
 
-> This package is a public ReptilianHQ repack of PrefectHQ's unpublished
-> `1.0.0-rc.0` release candidate at commit
-> `f765dbddbab8e7cf110c29086b300e2bc9c81af4`. ReptilianHQ has not modified the
-> runtime source. Prefer the upstream `@prefecthq/fastmcp-ts` package once that
-> release is available from npm.
+> This package is a public ReptilianHQ repack of PrefectHQ's `1.5.0` release.
+> It retains ReptilianHQ's `staticTokenVerifier` hardening, which rejects
+> inherited object-property names unless they are explicitly configured tokens.
+> Distribution is GitHub-only; upstream remains the primary project.
 
 The TypeScript framework for building [Model Context Protocol](https://modelcontextprotocol.io) servers, clients, and apps. The official TypeScript counterpart to [FastMCP for Python](https://github.com/PrefectHQ/fastmcp) - built and maintained with 💙 by the same team at [Prefect](https://prefect.io).
 
 Built on version 2 of the official [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) — the scoped `@modelcontextprotocol/server` and `@modelcontextprotocol/client` packages. FastMCP handles the protocol plumbing so you can focus on what your server actually does.
 
-FastMCP 1.0 speaks both MCP protocol generations: the 2025 legacy era and the 2026-07-28 modern era. A server serves both at once, and a client negotiates one. Upgrading from 0.x keeps your existing code running — the client defaults to the legacy era until you opt into the modern one. The [migration guide](docs/migration.mdx) covers the upgrade path.
+FastMCP 1.0 speaks both MCP protocol generations: the 2025 legacy era and the 2026-07-28 modern era. A server serves both at once, and a client negotiates one. The client negotiates automatically by default: it probes once at connect, uses the modern era when the server offers it, and falls back to legacy otherwise, so upgrading from 0.x keeps your existing code running against servers of either generation. Pass `versionNegotiation: { mode: 'legacy' }` to opt out of the probe. The [migration guide](docs/migration.mdx) covers the upgrade path.
 
 ## Installation
 
 ```bash
-npm install @reptilianhq/fastmcp-ts@https://github.com/ReptilianHQ/fastmcp-ts/releases/download/v1.0.0-rc.0-reptilian.1/reptilianhq-fastmcp-ts-1.0.0-rc.0-reptilian.1.tgz
+npm install @reptilianhq/fastmcp-ts@https://github.com/ReptilianHQ/fastmcp-ts/releases/download/v1.5.0-reptilian.0/reptilianhq-fastmcp-ts-1.5.0-reptilian.0.tgz
 ```
 
 ---
@@ -295,7 +294,7 @@ fastmcp run server.ts --transport http --port 3000
 fastmcp inspect --file server.ts
 fastmcp inspect --url http://localhost:3000
 fastmcp inspect --file server.ts --json
-fastmcp inspect --file server.ts --modern       # negotiate the 2026-07-28 protocol era over stdio
+fastmcp inspect --file server.ts --legacy       # force the legacy 2025 era, no probe
 fastmcp inspect --file server.ts --pin 2026-07-28  # require that exact era
 
 # Call a tool, read a resource, or get a prompt
@@ -318,7 +317,7 @@ fastmcp install claude-desktop server.ts
 fastmcp discover
 ```
 
-`fastmcp inspect`, `fastmcp list`, and `fastmcp call` connect over stdio by default, when you pass `--file` or `--command`. Add `--modern` to negotiate the newer 2026-07-28 protocol era. A `--url` connection negotiates the protocol version automatically, so `--modern` is not needed for HTTP. `--pin <version>` works on every transport, including HTTP. It forces that exact protocol revision. The connection fails if the server does not offer it.
+`fastmcp inspect`, `fastmcp list`, and `fastmcp call` negotiate the protocol era automatically on every transport: one probe at connect, the modern 2026-07-28 era when the server offers it, and the legacy 2025 era otherwise. Add `--legacy` to skip the probe and force the legacy era. `--pin <version>` works on every transport, including HTTP. It forces that exact protocol revision. The connection fails if the server does not offer it. `--modern` is a deprecated no-op, kept for compatibility.
 
 ---
 

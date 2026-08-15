@@ -1,8 +1,8 @@
 import type { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import { hostHeaderValidation, originValidation } from "@modelcontextprotocol/node";
 import type { OAuthServerProvider } from "@modelcontextprotocol/server-legacy/auth";
-import { ProtocolError, ProtocolErrorCode, ResourceNotFoundError, Server, createMcpHandler, isLegacyRequest, isJsonContentType, createRequestStateCodec, localhostAllowedHostnames, localhostAllowedOrigins, assertCompleteRequestPrompt, assertCompleteRequestResourceTemplate } from "@modelcontextprotocol/server";
-import type { Transport, AuthInfo, ListToolsResult, GetPromptResult, CompleteRequestParams, CompleteResult, McpHttpHandler, McpHandlerRequestOptions, CacheHint, RequestStateCodec, ServerContext, ServerEventBus } from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode, ResourceNotFoundError, Server, createMcpHandler, legacyStatelessFallback, isLegacyRequest, isJsonContentType, createRequestStateCodec, localhostAllowedHostnames, localhostAllowedOrigins, assertCompleteRequestPrompt, assertCompleteRequestResourceTemplate } from "@modelcontextprotocol/server";
+import type { Transport, AuthInfo, ListToolsResult, GetPromptResult, CompleteRequestParams, CompleteResult, McpHttpHandler, LegacyHttpHandler, McpHandlerRequestOptions, CacheHint, RequestStateCodec, ServerContext, ServerEventBus } from "@modelcontextprotocol/server";
 
 // Not exported by @modelcontextprotocol/server (CacheableResultMethod is internal-only);
 // mirrors its CACHEABLE_RESULT_METHODS literal union (SEP-2549 cacheable operations).
@@ -20,10 +20,16 @@ import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node
 import type { AddressInfo } from 'node:net'
 import { AuthorizationError } from './auth/types'
 import type { TokenVerifier, AccessToken } from './auth/types'
+import type { RequestVerifier } from './auth/types'
+import { isRequestVerifier } from './auth/types'
 import type { AuthCheck } from './auth/authorization'
 import { BoundedEventStore, LEGACY_SSE_RETRY_MS } from './legacyEventStore'
 import { contextStore, createContext, SESSION_CLOSE_CALLBACKS_KEY } from './context'
 import type { McpContext } from './context'
+import { resolveSensitiveHeaders, nodeRequestToHttpContext } from './httpContext'
+import { CustomRouteRegistry, serveCustomRouteNode, writeMethodNotAllowed, resolveHealth } from './customRoutes'
+import type { CustomRouteConfig, CustomRouteHandler, HealthOptions } from './customRoutes'
+import { envBool } from './env'
 import { runMiddlewareChain } from './middleware'
 import type { Middleware } from './middleware'
 import { applyTransformChain } from './transform'
@@ -31,6 +37,7 @@ import type { Transform, ToolView, ResourceView, PromptView, SynthesizedTool } f
 import { convertResult, toJsonSchema, validateInput, ToolResult } from './tool'
 import { isInputRequiredResult } from './mrtr'
 import {
+  attachResourceUiMeta,
   convertResourceResult,
   isUriTemplate,
   matchTemplate,
@@ -64,10 +71,27 @@ export interface OAuthConfig {
 export interface FastMCPOptions {
   name: string
   version?: string
-  /** Simple bearer-token verifier for non-OAuth auth scenarios. */
-  auth?: TokenVerifier
+  /**
+   * Bearer-token verifier, or a RequestVerifier for header-based
+   * (trusted-proxy) deployments. See each type's docs. A RequestVerifier
+   * applies to HTTP transports only; stdio's FASTMCP_CLI_AUTH_TOKEN needs a
+   * TokenVerifier. When both `oauth` and `auth` are set, `oauth` serves the
+   * endpoint and `auth` is ignored.
+   */
+  auth?: TokenVerifier | RequestVerifier
   /** Full OAuth 2.1 server with Dynamic Client Registration support. */
   oauth?: OAuthConfig
+  /**
+   * HTTP request context tuning for `ctx.http`. `redactHeaders` adds names to
+   * the sensitive set withheld from `ctx.http.headers` (defaults:
+   * authorization, cookie, proxy-authorization, mcp-session-id); use it for
+   * deployment-specific credentials such as a proxy shared-secret header.
+   * `exposeHeaders` removes names from the set; it is the explicit, greppable
+   * opt-out. Withheld names are listed in `ctx.http.redactedHeaderNames`.
+   * Redaction applies to `ctx.http` only; a RequestVerifier always sees the
+   * full wire headers.
+   */
+  http?: { redactHeaders?: string[]; exposeHeaders?: string[] }
   /** Maximum number of tools returned per listTools page. Default: 50. */
   toolsPageSize?: number
   /** Maximum number of resources (or templates) returned per page. Default: 50. */
@@ -137,11 +161,14 @@ export interface FastMCPOptions {
    */
   eventBus?: ServerEventBus
   /**
-   * DNS-rebinding protection for the HTTP transport: validates the `Host` and
-   * `Origin` request headers (port-agnostic, by hostname) and rejects mismatches
-   * with `403`. Defends localhost servers against a malicious web page whose DNS
-   * rebinds to `127.0.0.1` (MCP transport security best practice). Only affects the
-   * HTTP transport — stdio is unaffected.
+   * DNS-rebinding protection for the HTTP listener started by `run()`: validates
+   * the `Host` and `Origin` request headers (port-agnostic, by hostname) and rejects
+   * mismatches with `403`. Defends localhost servers against a malicious web page
+   * whose DNS rebinds to `127.0.0.1` (MCP transport security best practice).
+   *
+   * This option does not apply to `fetch()`, which has no bind address from which
+   * to infer a trusted host. A framework embedding `fetch()` owns Host/Origin
+   * validation at its HTTP boundary. stdio is unaffected.
    *
    * Default posture (option omitted): protection auto-enables when, and only when,
    * `run()` binds the HTTP server to a loopback host (`127.0.0.1`, `::1`,
@@ -173,6 +200,30 @@ export interface RunOptions {
   port?: number
   host?: string
   path?: string
+  /**
+   * Serve the legacy (2025-era) HTTP transport statelessly: a fresh server and
+   * transport per request, no session registry, incoming `mcp-session-id`
+   * ignored, and no session id issued. Use this behind a load balancer or on
+   * serverless compute where consecutive requests reach different instances.
+   *
+   * Falls back to the `FASTMCP_STATELESS_HTTP` environment variable, then to
+   * `false`. A valid value is ignored for the stdio transport, but a malformed
+   * one still aborts stdio startup, deliberately. The modern (2026-07-28) era
+   * is already stateless and is unaffected.
+   */
+  stateless?: boolean
+  /**
+   * Health endpoint on the HTTP listener `run()` starts — for Kubernetes
+   * liveness/readiness probes and load-balancer checks. Off unless supplied:
+   * `true` (or any object) enables it with defaults `path: '/healthz'`,
+   * `status: 200`, `body: 'ok'` (`text/plain`); `enabled: false` (or `false`)
+   * forces it off. Served before MCP auth, CORS, and the DNS-rebinding
+   * guards, so probes need no credentials and may send a pod-IP Host header.
+   * Sugar over `customRoute()` — registering your own route on the same path
+   * is a startup error. Ignored on stdio (a malformed value still aborts
+   * startup, like `stateless`) and never served through `fetch()`.
+   */
+  health?: boolean | HealthOptions
   /** Custom stdin stream for the stdio transport. Defaults to process.stdin. */
   stdin?: Readable
   /** Custom stdout stream for the stdio transport. Defaults to process.stdout. */
@@ -185,11 +236,32 @@ export interface ServerAddress {
   path: string
 }
 
+/**
+ * Behavioral hints for a tool (MCP 2025-03-26). Advisory only — clients may use
+ * them for UI/UX and safety decisions (e.g. auto-approving a read-only call); the
+ * server does not enforce them. Per the MCP spec, annotations from an untrusted
+ * server should not be relied upon.
+ */
+export interface ToolAnnotations {
+  /** Human-readable title for display. */
+  title?: string
+  /** The tool does not modify its environment. Default: false. */
+  readOnlyHint?: boolean
+  /** The tool may perform destructive updates. Only meaningful when readOnlyHint is false. Default: true. */
+  destructiveHint?: boolean
+  /** Repeated calls with the same arguments have no additional effect. Only meaningful when readOnlyHint is false. Default: false. */
+  idempotentHint?: boolean
+  /** The tool may interact with an open world of external entities. Default: true. */
+  openWorldHint?: boolean
+}
+
 export interface ToolConfig {
   name: string
   /** Human-readable display name shown in UIs. Takes precedence over `name` for display purposes. */
   title?: string
   description: string
+  /** Behavioral hints for clients (MCP 2025-03-26). Forwarded verbatim in tools/list. */
+  annotations?: ToolAnnotations
   /** Standard Schema validator for the tool's input arguments. Used for runtime validation. */
   input?: StandardSchemaV1
   /**
@@ -255,6 +327,17 @@ interface Session {
  */
 const RESOURCE_SUBSCRIPTIONS_KEY = '__fastmcp_resource_subscriptions'
 
+/**
+ * Guard message for `resources/subscribe`/`unsubscribe` on a stateless HTTP
+ * server. The server withdraws the `resources.subscribe` capability (see
+ * `_makeServer`), so a compliant client never calls these; this is the
+ * refusal for a non-compliant client that calls them anyway.
+ */
+const STATELESS_SUBSCRIBE_ERROR =
+  '[fastmcp] resources/subscribe and resources/unsubscribe are unavailable on a stateless HTTP server. ' +
+  'A stateless server keeps no session, so a subscription has nowhere to live and no channel to deliver on. ' +
+  'The server does not advertise the resources.subscribe capability; a compliant client will not call this.'
+
 /** Converts a camelCase or PascalCase name to space-separated words. e.g. `getWeather` → `"get weather"` */
 function inferDescription(name: string): string {
   return name
@@ -296,8 +379,10 @@ function toAccessToken(authInfo: AuthInfo | undefined): AccessToken | undefined 
 // undefined = not yet resolved; null = env var absent or verification failed.
 let _cliEnvToken: AccessToken | null | undefined
 
-async function resolveCliEnvToken(verifier: TokenVerifier | undefined): Promise<AccessToken | undefined> {
-  if (!verifier) return undefined
+async function resolveCliEnvToken(
+  verifier: TokenVerifier | RequestVerifier | undefined,
+): Promise<AccessToken | undefined> {
+  if (!verifier || !('verify' in verifier)) return undefined
   if (_cliEnvToken !== undefined) return _cliEnvToken ?? undefined
   const raw = process.env['FASTMCP_CLI_AUTH_TOKEN']
   if (!raw) { _cliEnvToken = null; return undefined }
@@ -326,14 +411,16 @@ export class FastMCP {
   readonly name: string
   readonly version: string
 
-  private _auth: TokenVerifier | undefined
+  private _auth: TokenVerifier | RequestVerifier | undefined
   private _oauth: OAuthConfig | undefined
+  private _sensitiveHeaders: Set<string>
   private _toolsPageSize: number
   private _resourcesPageSize: number
   private _tools = new Map<string, RegisteredTool>()
   private _staticResources = new Map<string, RegisteredResource>()
   private _templateResources = new Map<string, RegisteredResource>()
   private _prompts = new Map<string, RegisteredPrompt>()
+  private _customRoutes = new CustomRouteRegistry()
   private _promptsPageSize: number
   private _middleware: Middleware[]
   private _transforms: Transform[]
@@ -352,6 +439,7 @@ export class FastMCP {
   private _address: ServerAddress | null = null
   private _isRunning = false
   private _sessions = new Map<string, Session>()
+  private _stateless = false
   // Primary server used by connect() (in-process transports — always 2025-era)
   private _primaryServer: Server
   // The pinned Server instance for a run({transport:'stdio'}) connection (2025- or
@@ -365,6 +453,7 @@ export class FastMCP {
   // Modern (2026-07-28) HTTP handler — one per FastMCP instance, lazily created.
   // Builds a fresh Server (via _makeServer) per request; see createMcpHandler.
   private _modernHandler: McpHttpHandler | null = null
+  private _statelessLegacyHandler: LegacyHttpHandler | null = null
 
   private _toolRegisteredCallbacks: Array<(tool: RegisteredTool) => void> = []
   private _resourceRegisteredCallbacks: Array<(resource: RegisteredResource) => void> = []
@@ -377,6 +466,7 @@ export class FastMCP {
     this.version = options.version ?? '0.0.1'
     this._auth = options.auth
     this._oauth = options.oauth
+    this._sensitiveHeaders = resolveSensitiveHeaders(options.http)
     this._toolsPageSize = options.toolsPageSize ?? 50
     this._resourcesPageSize = options.resourcesPageSize ?? 50
     this._promptsPageSize = options.promptsPageSize ?? 50
@@ -429,8 +519,16 @@ export class FastMCP {
    * client here, so nothing needs the era fork the way `subscribe` does. The
    * SDK also requires this capability to be present to register the
    * `completion/complete` handler (`assertRequestHandlerCapability`).
+   *
+   * `stateless` withdraws the same capability for a different reason. A
+   * stateless server has no session for a subscription to live in and no
+   * channel to deliver `notifications/resources/updated` on, so it must not
+   * claim the capability.
    */
-  private _makeServer(sessionState?: Map<string, unknown>, opts?: { modern?: boolean }): Server {
+  private _makeServer(
+    sessionState?: Map<string, unknown>,
+    opts?: { modern?: boolean; stateless?: boolean },
+  ): Server {
     const state = sessionState ?? this._primaryState
     // mimeTypes announces what fastmcp can serve, symmetric with the mimeTypes the
     // client is required to declare on its own extension entry (SEP-1865).
@@ -440,7 +538,7 @@ export class FastMCP {
     const server = new Server(
       { name: this.name, version: this.version },
       {
-        capabilities: { tools: { listChanged: true }, resources: { listChanged: true, ...(opts?.modern ? {} : { subscribe: true }) }, prompts: { listChanged: true }, logging: {}, completions: {}, ...(extensions ? { extensions } : {}) },
+        capabilities: { tools: { listChanged: true }, resources: { listChanged: true, ...(opts?.modern || opts?.stateless ? {} : { subscribe: true }) }, prompts: { listChanged: true }, logging: {}, completions: {}, ...(extensions ? { extensions } : {}) },
         ...(this._cacheHints ? { cacheHints: this._cacheHints } : {}),
         ...(this._requestStateCodec
           ? { requestState: { verify: this._requestStateCodec.verify.bind(this._requestStateCodec) } }
@@ -449,7 +547,7 @@ export class FastMCP {
       },
     )
     for (const mw of this._middleware) mw.setup?.(server)
-    this._setupHandlers(server, state)
+    this._setupHandlers(server, state, opts)
     return server
   }
 
@@ -457,10 +555,14 @@ export class FastMCP {
     return toAccessToken(authInfo) ?? await resolveCliEnvToken(this._auth)
   }
 
-  private _setupHandlers(server: Server, sessionState: Map<string, unknown>): void {
+  private _setupHandlers(
+    server: Server,
+    sessionState: Map<string, unknown>,
+    opts?: { stateless?: boolean },
+  ): void {
     server.setRequestHandler('tools/list', async (req, sdkCtx) => {
       const token = await this._resolveToken(sdkCtx.http?.authInfo)
-      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec)
+      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders)
       return contextStore.run(ctx, () =>
         runMiddlewareChain(this._middleware, 'tools/list', req.params, ctx, async () => {
           const clientIsUiCapable = isUiCapable(server.getClientCapabilities())
@@ -544,6 +646,7 @@ export class FastMCP {
                 description: entry.description,
                 inputSchema,
                 ...(outputSchema ? { outputSchema } : {}),
+                ...(t.annotations ? { annotations: t.annotations } : {}),
                 ...(uiMeta ? { _meta: { ui: uiMeta } } : {}),
               }
             }),
@@ -568,7 +671,7 @@ export class FastMCP {
       const synthTool = synthesizedList.find((s) => s.name === requestedName)
       if (synthTool) {
         if (synthTool.auth) await runAuthCheck(synthTool.auth, token)
-        const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec)
+        const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders)
         try {
           return await contextStore.run(ctx, () =>
             runMiddlewareChain(this._middleware, 'tools/call', req.params, ctx, async () => {
@@ -588,7 +691,7 @@ export class FastMCP {
                   clearTimeout(timer),
                 )
               }
-              return convertResult(await executePromise)
+              return convertResult(await executePromise, opts?.stateless)
             }),
           )
         } catch (err) {
@@ -622,7 +725,7 @@ export class FastMCP {
 
       const resolvedTool = tool
       const rawArgs: unknown = req.params.arguments ?? {}
-      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec)
+      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders)
 
       try {
         return await contextStore.run(ctx, () =>
@@ -647,7 +750,7 @@ export class FastMCP {
 
             let resultValue = await executePromise
             if (resolvedTool.config.output) resultValue = await validateInput(resolvedTool.config.output, resultValue)
-            const callResult = convertResult(resultValue)
+            const callResult = convertResult(resultValue, opts?.stateless)
             // Graceful degradation: strip structuredContent for non-UI clients calling UI tools
             if (resolvedTool.config.ui) {
               const clientIsUi = isUiCapable(server.getClientCapabilities())
@@ -669,7 +772,7 @@ export class FastMCP {
 
     server.setRequestHandler('resources/list', async (req, sdkCtx) => {
       const token = await this._resolveToken(sdkCtx.http?.authInfo)
-      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec)
+      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders)
       return contextStore.run(ctx, () =>
         runMiddlewareChain(this._middleware, 'resources/list', req.params, ctx, async () => {
           const allVisible = (
@@ -721,7 +824,7 @@ export class FastMCP {
 
     server.setRequestHandler('resources/templates/list', async (req, sdkCtx) => {
       const token = await this._resolveToken(sdkCtx.http?.authInfo)
-      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec)
+      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders)
       return contextStore.run(ctx, () =>
         runMiddlewareChain(this._middleware, 'resources/templates/list', req.params, ctx, async () => {
           const allVisible = (
@@ -784,7 +887,7 @@ export class FastMCP {
 
       if (resource.config.auth) await runAuthCheck(resource.config.auth, token)
 
-      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec)
+      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders)
 
       return contextStore.run(ctx, () =>
         runMiddlewareChain(this._middleware, 'resources/read', req.params, ctx, async () => {
@@ -805,7 +908,8 @@ export class FastMCP {
           }
 
           const result = await executePromise
-          return convertResourceResult(result, requestedUri, resource!.config.mimeType)
+          const converted = convertResourceResult(result, requestedUri, resource!.config.mimeType, opts?.stateless)
+          return attachResourceUiMeta(converted, resource!.config.ui, isUiCapable(server.getClientCapabilities()))
         }),
       )
     })
@@ -830,6 +934,7 @@ export class FastMCP {
     // only removes uri from the caller's own subscription set, so an unknown or
     // forbidden uri is a harmless no-op, not an oracle — there is nothing to guard.
     server.setRequestHandler('resources/subscribe', async (req, sdkCtx) => {
+      if (opts?.stateless) throw new ProtocolError(ProtocolErrorCode.MethodNotFound, STATELESS_SUBSCRIBE_ERROR)
       const uri = req.params.uri
       const token = await this._resolveToken(sdkCtx.http?.authInfo)
 
@@ -848,7 +953,7 @@ export class FastMCP {
       // caller: `{}` for a real-but-forbidden URI vs -32602 for an unknown one.
       if (resource.config.auth) await runAuthCheck(resource.config.auth, token)
 
-      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec)
+      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders)
 
       return contextStore.run(ctx, () =>
         runMiddlewareChain(this._middleware, 'resources/subscribe', req.params, ctx, async () => {
@@ -864,9 +969,10 @@ export class FastMCP {
     })
 
     server.setRequestHandler('resources/unsubscribe', async (req, sdkCtx) => {
+      if (opts?.stateless) throw new ProtocolError(ProtocolErrorCode.MethodNotFound, STATELESS_SUBSCRIBE_ERROR)
       const uri = req.params.uri
       const token = await this._resolveToken(sdkCtx.http?.authInfo)
-      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec)
+      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders)
 
       return contextStore.run(ctx, () =>
         runMiddlewareChain(this._middleware, 'resources/unsubscribe', req.params, ctx, async () => {
@@ -879,7 +985,7 @@ export class FastMCP {
 
     server.setRequestHandler('prompts/list', async (req, sdkCtx) => {
       const token = await this._resolveToken(sdkCtx.http?.authInfo)
-      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec)
+      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders)
       return contextStore.run(ctx, () =>
         runMiddlewareChain(this._middleware, 'prompts/list', req.params, ctx, async () => {
           const allVisible = (
@@ -967,7 +1073,7 @@ export class FastMCP {
         }
       }
 
-      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec)
+      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders)
 
       return contextStore.run(ctx, () =>
         runMiddlewareChain(this._middleware, 'prompts/get', req.params, ctx, async () => {
@@ -988,7 +1094,7 @@ export class FastMCP {
           // Cast: the SDK infers the handler's return type as GetPromptResult |
           // InputRequiredResult (multi-round-trip); this handler only returns the
           // "complete" shape today. inputRequired(...) support lands separately.
-          return convertPromptResult(await executePromise) as GetPromptResult
+          return convertPromptResult(await executePromise, opts?.stateless) as GetPromptResult
         }),
       )
     })
@@ -1004,7 +1110,7 @@ export class FastMCP {
     // observes it.
     server.setRequestHandler('completion/complete', async (req, sdkCtx) => {
       const token = await this._resolveToken(sdkCtx.http?.authInfo)
-      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec)
+      const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders)
       return contextStore.run(ctx, () =>
         runMiddlewareChain(this._middleware, 'completion/complete', req.params, ctx, async () => {
           const ref = req.params.ref
@@ -1268,6 +1374,18 @@ export class FastMCP {
     for (const cb of this._resourceRegisteredCallbacks) cb(registered)
   }
 
+  /**
+   * Register a custom HTTP route on the listener `run()` starts — e.g. a
+   * Kubernetes liveness/readiness probe. The handler owns the whole exchange:
+   * no MCP auth, no DNS-rebinding guards, and no CORS headers run in front of
+   * it. Matching is exact-path (query string ignored); methods default to GET.
+   * Routes never serve on stdio or through `fetch()` — a framework embedding
+   * `fetch()` owns its own routing (same posture as `dnsRebinding`).
+   */
+  customRoute(config: CustomRouteConfig, handler: CustomRouteHandler): void {
+    this._customRoutes.register(config, handler)
+  }
+
   _removeTool(name: string): boolean {
     if (!this._tools.has(name)) return false
     this._tools.delete(name)
@@ -1341,6 +1459,13 @@ export class FastMCP {
 
           let resultValue = await executePromise
           if (tool.config.output) resultValue = await validateInput(tool.config.output, resultValue)
+          // Deliberately no `stateless` argument here: this method has no per-server
+          // `opts` in scope (it is only reached via `_mirrorTool`, for a mounted child),
+          // and the stateless-ness that matters is the top-level server actually
+          // serving the wire request, not this child. `_mirrorTool` passes an
+          // InputRequiredResult straight through unwrapped, so it re-enters the
+          // mounting parent's own top-level `convertResult(resultValue, opts?.stateless)`
+          // call, which applies the guard with the correct flag.
           return convertResult(resultValue)
         }),
       )
@@ -1434,6 +1559,11 @@ export class FastMCP {
             clearTimeout(timer),
           )
         }
+        // Deliberately no `stateless` argument — see the matching comment in
+        // `_dispatchTool` above. `_mirrorPrompt` passes an InputRequiredResult
+        // straight through unwrapped, so it re-enters the mounting parent's own
+        // top-level `convertPromptResult(await executePromise, opts?.stateless)`
+        // call, which applies the guard with the correct top-level flag.
         return convertPromptResult(await executePromise)
       }),
     )
@@ -1457,6 +1587,14 @@ export class FastMCP {
       // own convertResult passes it through unchanged) or an InputRequiredResult
       // (multi-round-trip escape hatch — already recognized directly by convertResult,
       // must not be wrapped).
+      //
+      // LOAD-BEARING for the stateless inputRequests guard: if this ever wraps an
+      // InputRequiredResult too, the parent's top-level convertResult takes the
+      // `instanceof ToolResult` branch instead of the `isInputRequiredResult` one, which
+      // skips assertInputRequestsAllowedStateless (mrtr.ts) entirely — a stateless legacy
+      // client would then receive an unusable inputRequests result with no error. See the
+      // matching comment on `_dispatchTool` above (this method's counterpart on the other
+      // side of the coupling).
       return child._dispatchTool(originalName, args, childCtx).then((result) =>
         isInputRequiredResult(result) ? result : new ToolResult(result),
       )
@@ -1490,6 +1628,10 @@ export class FastMCP {
     const forwardedConfig: PromptConfig = { ...(prompt.config as PromptConfig), name: key }
     this.prompt(forwardedConfig, (args?: Record<string, string>) => {
       const ctx = contextStore.getStore()!
+      // LOAD-BEARING for the stateless inputRequests guard, same reasoning as _mirrorTool's
+      // matching comment above: wrapping an InputRequiredResult here would skip the parent's
+      // top-level convertPromptResult -> assertInputRequestsAllowedStateless (mrtr.ts) check,
+      // silently handing a stateless legacy client an unusable inputRequests result.
       return child._dispatchPrompt(originalName, args ?? {}, ctx).then((result) =>
         isInputRequiredResult(result) ? result : new PromptResult(result.messages, result.description),
       )
@@ -1709,6 +1851,31 @@ export class FastMCP {
   }
 
   /**
+   * Serve an MCP request through a web-standard, fetch-native HTTP entrypoint.
+   *
+   * This entrypoint is always stateless and does not require `run()`: legacy
+   * (2025-era) requests use a fresh server instance per request, while modern
+   * (2026-07-28) requests share the instance's modern handler and event bus.
+   * Authentication is deliberately external — `options.authInfo` is trusted and
+   * passed unchanged into the protocol handler, where it is exposed as `ctx.auth`.
+   * The embedding framework also owns Host/Origin validation and should abort its
+   * carrying requests during shutdown; stateless legacy response streams follow
+   * that request lifecycle, while `close()` terminates modern exchanges and streams.
+   */
+  async fetch(request: Request, options?: McpHandlerRequestOptions): Promise<Response> {
+    if (request.method.toUpperCase() === 'POST' && !isJsonContentType(request.headers.get('content-type'))) {
+      return new Response(
+        JSON.stringify({ error: 'Unsupported Media Type: expected application/json' }),
+        { status: 415, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+
+    const legacy = await isLegacyRequest(request, options?.parsedBody)
+    if (legacy) return this._getStatelessLegacyHandler()(request, options)
+    return this._getModernHandler().fetch(request, options)
+  }
+
+  /**
    * Modern-era (2026-07-28) in-process fetch entrypoint — the `McpServerLike`
    * duck-type hook `fastmcp-ts/client`'s `Client` looks for when a caller pins
    * modern era for an in-process server (`versionNegotiation: { mode: { pin:
@@ -1735,6 +1902,14 @@ export class FastMCP {
     const host = options?.host ?? process.env.MCP_HOST ?? '127.0.0.1'
     const path = options?.path ?? process.env.MCP_PATH ?? '/mcp'
 
+    // Resolved for every transport so a malformed value fails loudly at startup
+    // regardless of how the server is being served. Only the http path reads it.
+    this._stateless = options?.stateless ?? envBool('FASTMCP_STATELESS_HTTP') ?? false
+
+    // Resolved for every transport so a malformed value fails loudly at startup
+    // (the `stateless` precedent). Only the http branch registers the route.
+    const resolvedHealth = resolveHealth(options?.health)
+
     if (transport === 'stdio') {
       const { StdioServerTransport, serveStdio } = await import('@modelcontextprotocol/server/stdio')
       const stdioTransport = new StdioServerTransport(options?.stdin, options?.stdout)
@@ -1760,19 +1935,38 @@ export class FastMCP {
         },
         { transport: stdioTransport },
       )
-    } else if (this._oauth) {
-      await this._runHttpOAuth(port, host, path)
     } else {
-      await this._runHttpSimple(port, host, path)
+      if (resolvedHealth) {
+        this._customRoutes.register(
+          { path: resolvedHealth.path },
+          () =>
+            // An empty body maps to a null Response body (no Content-Type either): the
+            // fetch spec forbids any body, even '', on 101/204/205/304, and resolveHealth
+            // already rejected a non-empty body on those statuses — so branching on the
+            // body alone is enough to keep this call from throwing.
+            resolvedHealth.body === ''
+              ? new Response(null, { status: resolvedHealth.status })
+              : new Response(resolvedHealth.body, {
+                  status: resolvedHealth.status,
+                  headers: { 'Content-Type': 'text/plain' },
+                }),
+        )
+      }
+      this._customRoutes.assertNoMcpCollision(path)
+      if (this._oauth) {
+        await this._runHttpOAuth(port, host, path)
+      } else {
+        await this._runHttpSimple(port, host, path)
+      }
     }
   }
 
   /** Lazily builds the modern (2026-07-28) HTTP handler. One per FastMCP instance;
    * builds a fresh Server (via _makeServer) per request, matching createMcpHandler's
    * per-request-factory model. Modern-only (legacy: 'reject') — legacy (2025-era)
-   * traffic is routed to the existing sessionful transport by _dispatchHttp instead
-   * of createMcpHandler's own stateless legacy fallback, so session state and the
-   * legacy server-initiated-request shim keep working for 2025-era clients. */
+   * traffic is routed separately: to the existing sessionful transport by
+   * _dispatchHttp, or to the stateless fallback by fetch(). This preserves the
+   * session state and server-initiated-request shim for run()'s default HTTP path. */
   private _getModernHandler(): McpHttpHandler {
     if (!this._modernHandler) {
       this._modernHandler = createMcpHandler(() => this._makeServer(new Map(), { modern: true }), {
@@ -1781,6 +1975,26 @@ export class FastMCP {
       })
     }
     return this._modernHandler
+  }
+
+  /** Lazily builds the stateless legacy (2025-era) HTTP handler. One per FastMCP
+   * instance, mirroring _getModernHandler's per-instance, per-request-factory model.
+   *
+   * The SDK serves each POST from a fresh instance of the factory over a transport
+   * built with `sessionIdGenerator: undefined`, and answers GET and DELETE with 405
+   * because both are session operations that mean nothing per request.
+   *
+   * Used unconditionally by fetch(), and by run() only when `_stateless` is on.
+   * The sessionful transport in _dispatchLegacyHttp is untouched and remains the
+   * default for listener-based HTTP deployments. */
+  private _getStatelessLegacyHandler(): LegacyHttpHandler {
+    if (!this._statelessLegacyHandler) {
+      this._statelessLegacyHandler = legacyStatelessFallback(
+        () => this._makeServer(new Map(), { stateless: true }),
+        (error) => console.error('[fastmcp] stateless legacy serving failed:', error),
+      )
+    }
+    return this._statelessLegacyHandler
   }
 
   /**
@@ -1817,7 +2031,17 @@ export class FastMCP {
     const parsedBody = req.method === 'POST' ? await request.json().catch(() => undefined) : undefined
 
     if (legacy) {
-      await this._dispatchLegacyHttp(req, res, parsedBody)
+      // Stateless serves 2025-era traffic per request through the SDK's own
+      // stateless leg, so consecutive requests may land on different instances.
+      // Sessionful serving is the default and keeps the in-memory session map.
+      if (this._stateless) {
+        // toNodeHandler wants a `{ fetch }`-shaped handler (FetchLikeMcpHandler);
+        // LegacyHttpHandler is the bare fetch-shaped function itself, so wrap it
+        // rather than widening toNodeHandler's own parameter type.
+        await toNodeHandler({ fetch: this._getStatelessLegacyHandler() })(req, res, parsedBody)
+      } else {
+        await this._dispatchLegacyHttp(req, res, parsedBody)
+      }
     } else {
       await toNodeHandler(this._getModernHandler())(req, res, parsedBody)
     }
@@ -1912,6 +2136,25 @@ export class FastMCP {
     const oauth = this._oauth!
     const app = express()
 
+    // One registry-driven middleware, registered ahead of the OAuth router and the
+    // bearer-gated MCP endpoint, so it dispatches custom routes first: no auth in
+    // front of a route handler. Matching goes through the registry's match(), the
+    // same exact-path lookup the simple serve path uses, not express's app.all
+    // pattern matching: app.all runs paths through path-to-regexp, which is
+    // case-insensitive, non-strict on trailing slashes, and treats characters like
+    // : and * as pattern syntax. That let a registered route answer requests it was
+    // never meant to (for example a route on /MCP shadowing POST /mcp, bypassing
+    // assertNoMcpCollision's case-sensitive check). match() returns null for OPTIONS,
+    // so it falls through via next() to express's default handling: this serve path
+    // has no global CORS preflight, so express answers with its own 404-style
+    // response, same as for the MCP endpoint here.
+    app.use((req, res, next) => {
+      const match = this._customRoutes.match(req.path, req.method ?? '')
+      if (!match) return next()
+      if (match.kind === 'method-mismatch') return writeMethodNotAllowed(res, match.allow)
+      void serveCustomRouteNode(match.handler, req, res)
+    })
+
     // Bind first so we can infer the issuerUrl from the actual bound port (handles port=0)
     const httpServer = await new Promise<HttpServer>((resolve, reject) => {
       const srv = app.listen(port, host, () => resolve(srv))
@@ -1970,7 +2213,18 @@ export class FastMCP {
         return
       }
 
-      if (req.url?.split('?')[0] !== path) {
+      // Custom routes dispatch before the MCP path check, CORS injection, auth,
+      // and the DNS-rebinding guards: a matched handler owns the whole exchange
+      // (spec: docs/superpowers/specs/2026-08-10-health-endpoint-custom-routes-design.md).
+      const pathname = req.url?.split('?')[0] ?? ''
+      const routeMatch = this._customRoutes.match(pathname, req.method ?? '')
+      if (routeMatch) {
+        if (routeMatch.kind === 'method-mismatch') writeMethodNotAllowed(res, routeMatch.allow)
+        else await serveCustomRouteNode(routeMatch.handler, req, res)
+        return
+      }
+
+      if (pathname !== path) {
         res.writeHead(404).end()
         return
       }
@@ -1980,18 +2234,34 @@ export class FastMCP {
 
       // Auth middleware
       if (auth) {
-        const authHeader = req.headers.authorization
-        const bearer = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
-
-        if (!bearer) {
-          res
-            .writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer realm="mcp"' })
-            .end(JSON.stringify({ error: 'Missing bearer token' }))
-          return
-        }
-
-        try {
-          const accessToken = await auth.verify(bearer)
+        if (isRequestVerifier(auth)) {
+          let accessToken: AccessToken
+          try {
+            accessToken = await auth.verifyRequest(nodeRequestToHttpContext(req))
+          } catch (err) {
+            if (err instanceof AuthorizationError) {
+              res
+                .writeHead(403, { 'Content-Type': 'application/json' })
+                .end(JSON.stringify({ error: err.message }))
+            } else {
+              res
+                .writeHead(401, { 'Content-Type': 'application/json' })
+                .end(JSON.stringify({ error: err instanceof Error ? err.message : 'Authentication failed' }))
+            }
+            return
+          }
+          if (!accessToken.token) {
+            // Operator bug, not a client error: an empty token would collapse
+            // every header-authenticated caller into one response-cache
+            // partition (see CachingMiddleware's auth partitioning).
+            console.error(
+              '[fastmcp] RequestVerifier.verifyRequest must set AccessToken.token to a stable, non-empty per-identity value. It keys response-cache partitioning and downstream identity.',
+            )
+            res
+              .writeHead(500, { 'Content-Type': 'application/json' })
+              .end(JSON.stringify({ error: 'verifyRequest returned an AccessToken with an empty token' }))
+            return
+          }
           ;(req as IncomingMessage & { auth: AuthInfo }).auth = {
             token: accessToken.token,
             clientId: accessToken.clientId ?? '',
@@ -1999,17 +2269,38 @@ export class FastMCP {
             expiresAt: accessToken.expiresAt,
             extra: accessToken.claims,
           }
-        } catch (err) {
-          if (err instanceof AuthorizationError) {
-            res
-              .writeHead(403, { 'Content-Type': 'application/json' })
-              .end(JSON.stringify({ error: err.message }))
-          } else {
+        } else {
+          const authHeader = req.headers.authorization
+          const bearer = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
+
+          if (!bearer) {
             res
               .writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer realm="mcp"' })
-              .end(JSON.stringify({ error: err instanceof Error ? err.message : 'Authentication failed' }))
+              .end(JSON.stringify({ error: 'Missing bearer token' }))
+            return
           }
-          return
+
+          try {
+            const accessToken = await auth.verify(bearer)
+            ;(req as IncomingMessage & { auth: AuthInfo }).auth = {
+              token: accessToken.token,
+              clientId: accessToken.clientId ?? '',
+              scopes: accessToken.scopes,
+              expiresAt: accessToken.expiresAt,
+              extra: accessToken.claims,
+            }
+          } catch (err) {
+            if (err instanceof AuthorizationError) {
+              res
+                .writeHead(403, { 'Content-Type': 'application/json' })
+                .end(JSON.stringify({ error: err.message }))
+            } else {
+              res
+                .writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer realm="mcp"' })
+                .end(JSON.stringify({ error: err instanceof Error ? err.message : 'Authentication failed' }))
+            }
+            return
+          }
         }
       }
 
@@ -2040,6 +2331,13 @@ export class FastMCP {
       await this._modernHandler.close()
       this._modernHandler = null
     }
+
+    // LegacyHttpHandler is a bare fetch-shaped function (no `.close()` to call), but it
+    // still gets nulled out here, symmetric with `_modernHandler` above: both are
+    // per-instance, lazily-built handlers (see `_getStatelessLegacyHandler`'s doc
+    // comment), and leaving this one set after close() would serve a stale handler
+    // instance if the server is run() again instead of rebuilding a fresh one.
+    this._statelessLegacyHandler = null
 
     if (this._stdioHandle) {
       await this._stdioHandle.close()
