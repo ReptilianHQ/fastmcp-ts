@@ -8,7 +8,10 @@ When writing, revising, reorganizing, or reviewing anything in `docs/` (concept 
 
 ## Releases
 
-Releases are automated with changesets. On every push to `main`, the Release workflow (`.github/workflows/release.yml`) opens or updates the "Version Packages" PR from the files in `.changeset/`, and publishes to npm when that PR merges. No changeset file → no version bump → no release. Any PR that changes npm-visible behavior (published code under `src/`, the CLI, dependencies, build config) must include a changeset: run `npx changeset` and pick the semver level. Docs-site-only (`docs/`) and CI-only changes need none.
+ReptilianHQ releases are explicit GitHub-only repacks. Update the package version,
+changelog, release documentation, and workflow defaults together, then manually
+dispatch `.github/workflows/release.yml` with the exact version and tag after the
+release PR merges. Never publish this fork to npm.
 
 ## Key decisions
 
@@ -16,7 +19,7 @@ Releases are automated with changesets. On every push to `main`, the Release wor
 
 **Protocol eras:** FastMCP is dual-era. One server instance serves both the 2025 legacy revision and the modern 2026-07-28 revision — a hybrid HTTP router forks the legacy sessionful transport from the modern stateless `createMcpHandler` path — and a client negotiates which era to use per connection. This split is the backdrop for the era-gated behavior described throughout this document: server→client requests (sampling/elicitation/roots), session state, `ping`/`setLogLevel`, and resource subscriptions each behave differently per era. The library `Client` default is `{ mode: 'auto' }` — probe once, modern when offered, legacy fallback (see Client → version negotiation).
 
-**SDK foundation:** Built on the v2 scoped MCP SDK packages (`@modelcontextprotocol/{client,core,node,server,server-legacy}` at `2.0.0-beta.5`), replacing the 1.x `@modelcontextprotocol/sdk`. `ProtocolError` / `ProtocolErrorCode` replace `McpError` / `ErrorCode`. The frozen `@modelcontextprotocol/server-legacy` carries the 2025-era transports and backs the built-in OAuth authorization server.
+**SDK foundation:** Built on the stable v2 scoped MCP SDK packages (`@modelcontextprotocol/{client,core,node,server,server-legacy}` at `^2.0.0`), replacing the 1.x `@modelcontextprotocol/sdk`. `ProtocolError` / `ProtocolErrorCode` replace `McpError` / `ErrorCode`. The frozen `@modelcontextprotocol/server-legacy` carries the 2025-era transports and backs the built-in OAuth authorization server.
 
 **Multi-round-trip (MRTR / input-required):** A handler returns `inputRequired(...)` (re-exported from `fastmcp-ts/server`, alongside `acceptedContent` / `inputResponse`) to ask the caller for more input mid-call. The caller re-invokes with `ctx.inputResponses` populated; flow state is carried across rounds via `ctx.requestState<T>()` / `ctx.mintRequestState<T>(payload)` (HMAC-signed when `FastMCPOptions.requestState` is set). Tuned through `FastMCPOptions.inputRequired`. This is the era-transparent replacement for push-style `ctx.sample()` / `ctx.elicit()`, which are deprecated and era-gated (see Context).
 
