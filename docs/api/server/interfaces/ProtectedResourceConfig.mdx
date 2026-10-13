@@ -1,0 +1,67 @@
+---
+title: "ProtectedResourceConfig"
+---
+
+Defined in: [server/FastMCP.ts:81](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L81)
+
+RFC 9728 discovery for an MCP resource backed by an external authorization server.
+
+## Properties
+
+### authorizationServers
+
+```ts
+authorizationServers: URL[];
+```
+
+Defined in: [server/FastMCP.ts:85](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L85)
+
+Authorization servers that issue tokens accepted by `auth`.
+
+***
+
+### resourceName?
+
+```ts
+optional resourceName?: string;
+```
+
+Defined in: [server/FastMCP.ts:89](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L89)
+
+Human-readable protected-resource name.
+
+***
+
+### resourceUrl
+
+```ts
+resourceUrl: URL;
+```
+
+Defined in: [server/FastMCP.ts:83](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L83)
+
+Public URL of the MCP endpoint, including its path.
+
+***
+
+### scopes?
+
+```ts
+optional scopes?: string[];
+```
+
+Defined in: [server/FastMCP.ts:87](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L87)
+
+Scopes understood by this resource server.
+
+***
+
+### serviceDocumentationUrl?
+
+```ts
+optional serviceDocumentationUrl?: URL;
+```
+
+Defined in: [server/FastMCP.ts:91](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L91)
+
+Human-readable documentation for this protected resource.

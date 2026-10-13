@@ -834,6 +834,12 @@
             "isDeprecated": false
           },
           {
+            "title": "ProtectedResourceConfig",
+            "kind": 256,
+            "path": "server/interfaces/ProtectedResourceConfig.mdx",
+            "isDeprecated": false
+          },
+          {
             "title": "RequestBodyInfo",
             "kind": 256,
             "path": "server/interfaces/RequestBodyInfo.mdx",

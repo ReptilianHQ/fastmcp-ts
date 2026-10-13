@@ -262,6 +262,66 @@ describe('Server — Authentication', () => {
       expect(res.status).toBe(401)
       expect(res.headers.get('www-authenticate')).toBe('Bearer realm="mcp"')
     })
+
+    it('advertises path-correct RFC 9728 metadata for an external authorization server', async () => {
+      const resourceUrl = new URL('https://mcp.example.com/mcp')
+      const mcp = new FastMCP({
+        name: 'test-server',
+        auth: staticTokenVerifier({ tok: { scopes: ['mcp:read'] } }),
+        protectedResource: {
+          resourceUrl,
+          authorizationServers: [new URL('https://auth.example.com')],
+          scopes: ['mcp:read'],
+          resourceName: 'Example MCP',
+          serviceDocumentationUrl: new URL('https://docs.example.com/mcp'),
+        },
+      })
+      const { url } = await startServer(mcp)
+      cleanup.push(() => mcp.close())
+
+      const metadataUrl = new URL('/.well-known/oauth-protected-resource/mcp', url)
+      const metadataRes = await fetch(metadataUrl)
+      expect(metadataRes.status).toBe(200)
+      expect(metadataRes.headers.get('access-control-allow-origin')).toBe('*')
+      expect(await metadataRes.json()).toEqual({
+        resource: resourceUrl.href,
+        authorization_servers: ['https://auth.example.com/'],
+        scopes_supported: ['mcp:read'],
+        resource_name: 'Example MCP',
+        resource_documentation: 'https://docs.example.com/mcp',
+      })
+
+      const missing = await fetch(url, { method: 'POST' })
+      expect(missing.status).toBe(401)
+      expect(missing.headers.get('www-authenticate')).toBe(
+        'Bearer realm="mcp", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"',
+      )
+
+      const invalid = await rawPost(url, 'bad-token')
+      expect(invalid.status).toBe(401)
+      expect(invalid.headers.get('www-authenticate')).toBe(
+        'Bearer realm="mcp", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"',
+      )
+    })
+
+    it('rejects protected-resource discovery without a verifier or with a local OAuth server', () => {
+      const protectedResource = {
+        resourceUrl: new URL('https://mcp.example.com/mcp'),
+        authorizationServers: [new URL('https://auth.example.com')],
+      }
+
+      expect(() => new FastMCP({ name: 'test-server', protectedResource })).toThrow(
+        'protectedResource requires auth',
+      )
+      expect(
+        () => new FastMCP({
+          name: 'test-server',
+          auth: staticTokenVerifier({ tok: { scopes: [] } }),
+          oauth: { provider: oauthProvider() },
+          protectedResource,
+        }),
+      ).toThrow('protectedResource cannot be combined with oauth')
+    })
   })
 
   describe('opaque token introspection', () => {
@@ -345,6 +405,30 @@ describe('Server — Authentication', () => {
     afterEach(async () => {
       await Promise.all(cleanup.map((c) => c()))
       cleanup.length = 0
+    })
+
+    it('advertises the configured MCP path and challenges with its metadata URL', async () => {
+      const provider = oauthProvider()
+      const mcp = new FastMCP({
+        name: 'test-server',
+        oauth: { provider, issuerUrl: new URL('https://mcp.example.com') },
+      })
+      await mcp.run({ transport: 'http', port: 0, host: '127.0.0.1', path: '/mcp' })
+      cleanup.push(() => mcp.close())
+
+      const baseUrl = `http://127.0.0.1:${mcp.address!.port}`
+      const metadataRes = await fetch(`${baseUrl}/.well-known/oauth-protected-resource/mcp`)
+      expect(metadataRes.status).toBe(200)
+      expect(await metadataRes.json()).toMatchObject({
+        resource: 'https://mcp.example.com/mcp',
+        authorization_servers: ['https://mcp.example.com/'],
+      })
+
+      const challengeRes = await fetch(`${baseUrl}/mcp`, { method: 'POST' })
+      expect(challengeRes.status).toBe(401)
+      expect(challengeRes.headers.get('www-authenticate')).toContain(
+        'resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"',
+      )
     })
 
     it('a client without credentials can register dynamically and obtain tokens', async () => {
