@@ -1,6 +1,6 @@
 # fastmcp-ts
 
-> This package is a public ReptilianHQ repack of PrefectHQ's `1.5.0` release.
+> This package is a public ReptilianHQ repack of PrefectHQ's `1.7.3` release.
 > It retains ReptilianHQ's `staticTokenVerifier` hardening, which rejects
 > inherited object-property names unless they are explicitly configured tokens.
 > Distribution is GitHub-only; upstream remains the primary project.
@@ -14,7 +14,7 @@ FastMCP 1.0 speaks both MCP protocol generations: the 2025 legacy era and the 20
 ## Installation
 
 ```bash
-npm install @reptilianhq/fastmcp-ts@https://github.com/ReptilianHQ/fastmcp-ts/releases/download/v1.5.0-reptilian.0/reptilianhq-fastmcp-ts-1.5.0-reptilian.0.tgz
+npm install @reptilianhq/fastmcp-ts@https://github.com/ReptilianHQ/fastmcp-ts/releases/download/v1.7.3-reptilian.0/reptilianhq-fastmcp-ts-1.7.3-reptilian.0.tgz
 ```
 
 ---

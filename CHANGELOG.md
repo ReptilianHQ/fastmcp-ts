@@ -1,5 +1,15 @@
 # @reptilianhq/fastmcp-ts
 
+## 1.7.3-reptilian.0
+
+### Minor Changes
+
+- Refresh the fork to upstream FastMCP TypeScript 1.7.3.
+- Refresh the MCP SDK family within its existing v2 ranges and lock patched
+  releases for the OAuth credential-routing and `proxy-addr` advisories.
+- Retain inherited-property rejection in `staticTokenVerifier` and the
+  GitHub-only, immutable ReptilianHQ release pipeline.
+
 ## 1.5.0-reptilian.0
 
 ### Minor Changes
@@ -97,6 +107,63 @@
 - f74ddff: Fix: a modern stdio server no longer advertises `resources.subscribe`.
 
   A server on stdio in the modern era advertised the `resources.subscribe` capability by mistake. The modern era carries resource change signals over the `subscriptions/listen` stream, not over `resources/subscribe`, so the advertisement was wrong. The server now reports the correct capabilities for the negotiated era. A modern client no longer sees a subscribe capability that the modern era does not use.
+
+## 1.7.3
+
+### Patch Changes
+
+- 1c26cc3: Update bundled dependencies. The published CLI inlines its dependency tree, so these bumps change the shipped artifact:
+
+  - @hono/node-server 1.19.14 -> 1.19.17 (#108)
+  - ip-address 10.4.0 -> 10.7.2 (#106)
+
+  Also bumps undici 7.29.0 -> 7.30.0 (#109), markdown-it 14.2.0 -> 14.3.2 (#107), and brace-expansion 5.0.7 -> 5.0.12 (#110), which are dev-only and do not affect the published package.
+
+## 1.7.2
+
+### Patch Changes
+
+- ca462e8: Update bundled dependencies. The published CLI inlines its dependency tree, so these bumps change the shipped artifact:
+
+  - hono 4.13.0 -> 4.13.7 (#102)
+  - qs 6.15.2 -> 6.16.0 (#99)
+
+  Also bumps vitest 4.1.8 -> 4.1.11 (#103), which is dev-only and does not affect the published package.
+
+## 1.7.1
+
+### Patch Changes
+
+- 0d9c5c7: Validate URL string transport inputs against http/https schemes. A string passed to `Client` (or a `url` entry in an `mcpServers` config) that is not a valid `http:` or `https:` URL now fails fast with a clear error that points at `StdioTransport` for local scripts, instead of a bare `Invalid URL` TypeError or a doomed fetch against a non-HTTP scheme. Hardens the client against the transport-inference pitfall found in upstream python fastmcp, where a script path string could be silently executed; fastmcp-ts never executed strings, and now rejects them explicitly.
+
+## 1.7.0
+
+### Minor Changes
+
+- 6342119: Add configurable CORS for the HTTP listener via `http.cors` — restrict origins (string, list, or predicate), enable credentialed requests, extend the allowed/exposed header lists, replace the methods list, set a preflight max-age, or disable CORS entirely with `cors: false`. The OAuth serve path now applies the same CORS handling as the plain path (it previously had none), and responses now expose `Mcp-Session-Id` by default so cross-origin browser clients can read their session id. Defaults are otherwise unchanged (`Access-Control-Allow-Origin: *`). Non-preflight responses no longer include `Access-Control-Allow-Methods`/`Access-Control-Allow-Headers`; browsers read those only from preflight answers.
+- 1b458b9: Framework logs are now configurable. `FastMCPOptions.logger` accepts any object with `debug`/`info`/`warn`/`error` methods (console and Winston work directly; Pino needs a four-line adapter, see the logging docs), and `FastMCPOptions.logLevel` (or `FASTMCP_LOG_LEVEL`, default `info`, `silent` to disable) gates what reaches it. The built-in default logger writes styled output with a startup banner when stderr is a TTY and plain `[fastmcp] LEVEL message` lines otherwise, always to stderr. Server lifecycle events (start, listening URL, session open and close) are now logged, previously swallowed failures (proxied-server capability probes, schema-generation strategy failures) are now visible at warn or debug, and `LoggingMiddleware` constructed without an emit function now writes through the framework logger to stderr instead of `console.log`; that last change moves its output off stdout, which previously corrupted the JSON-RPC stream on the stdio transport. Anything parsing LoggingMiddleware output from stdout must read stderr instead. `createProxy` and `buildProxyFromClient` also accept `logger` and `logLevel` options, forwarded to the internal FastMCP instance that backs the proxy. The `run` CLI command now shows a startup spinner while it waits for the server to report listening, on a TTY; the `--quiet` flag also suppresses the "Server started" confirmation line that follows it.
+
+## 1.6.0
+
+### Minor Changes
+
+- 7e37ebc: Allow embedded applications to customize the MCP client identity with `ClientOptions.clientInfo` and `MultiServerOptions.clientInfo`. The default identity now reports the installed FastMCP package version instead of a hard-coded version.
+
+## 1.5.2
+
+### Patch Changes
+
+- ba8ed39: Fix modern-era (2026-07-28) resource subscriptions (#88). FastMCP servers now advertise the `resources.subscribe` capability on modern connections, so `subscriptions/listen` `resourceSubscriptions` filters are honored instead of being silently pruned, and `notifyResourceUpdated()` reaches modern subscribers on both HTTP and stdio (stdio delivery is routed through the SDK's listen router). Stateless legacy HTTP still withdraws the capability. `Client.subscribeResource()` on a modern connection now rejects with a clear error when the server does not honor the subscription, instead of registering a handler that can never fire.
+
+## 1.5.1
+
+### Patch Changes
+
+- 30c54ec: `createOpenAPIServer` fixes for three generation bugs:
+
+  - Body fields listed in the body schema's `required` are now marked required in the tool input schema even when the requestBody itself is optional (#82).
+  - A single body field is now JSON-wrapped (`{"body": "..."}` instead of the bare value) when the body schema is object-like, e.g. an `allOf` composition without an explicit `type: object` (#83).
+  - Generated output schemas no longer carry `format` keywords, so structured results are not rejected when the upstream API returns values like `""` for an unset `format: uri` field (#84).
 
 ## 1.5.0
 

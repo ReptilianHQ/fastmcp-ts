@@ -6,13 +6,13 @@ on:
       version:
         description: Exact package version expected in package.json
         required: true
-        default: 1.5.0-reptilian.0
+        default: 1.7.3-reptilian.0
       tag:
         description: GitHub prerelease tag
         required: true
-        default: v1.5.0-reptilian.0
+        default: v1.7.3-reptilian.0
       confirm_release:
-        description: Publish or update the public GitHub release
+        description: Publish the public GitHub release
         required: true
         type: boolean
         default: false

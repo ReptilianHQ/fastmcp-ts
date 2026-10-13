@@ -636,6 +636,12 @@
             "isDeprecated": false
           },
           {
+            "title": "CorsOptions",
+            "kind": 256,
+            "path": "server/interfaces/CorsOptions.mdx",
+            "isDeprecated": false
+          },
+          {
             "title": "CspPolicy",
             "kind": 256,
             "path": "server/interfaces/CspPolicy.mdx",
@@ -723,6 +729,12 @@
             "title": "IfNode",
             "kind": 256,
             "path": "server/interfaces/IfNode.mdx",
+            "isDeprecated": false
+          },
+          {
+            "title": "Logger",
+            "kind": 256,
+            "path": "server/interfaces/Logger.mdx",
             "isDeprecated": false
           },
           {
@@ -980,6 +992,12 @@
             "title": "CustomRouteHandler",
             "kind": 2097152,
             "path": "server/type-aliases/CustomRouteHandler.mdx",
+            "isDeprecated": false
+          },
+          {
+            "title": "FrameworkLogLevel",
+            "kind": 2097152,
+            "path": "server/type-aliases/FrameworkLogLevel.mdx",
             "isDeprecated": false
           },
           {

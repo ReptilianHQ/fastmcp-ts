@@ -317,10 +317,17 @@ describe('customRoute() over the simple HTTP path', () => {
     expect(res.headers.get('access-control-allow-origin')).toBe('*')
   })
 
-  it('a throwing handler answers 500 JSON and logs', async () => {
+  it('a throwing handler answers 500 JSON and logs through the injected logger, not console', async () => {
+    const calls: Array<{ level: string; message: string; meta?: Record<string, unknown> }> = []
+    const sink = {
+      debug: (message: string, meta?: Record<string, unknown>) => calls.push({ level: 'debug', message, meta }),
+      info: (message: string, meta?: Record<string, unknown>) => calls.push({ level: 'info', message, meta }),
+      warn: (message: string, meta?: Record<string, unknown>) => calls.push({ level: 'warn', message, meta }),
+      error: (message: string, meta?: Record<string, unknown>) => calls.push({ level: 'error', message, meta }),
+    }
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
-      mcp = new FastMCP({ name: 'routes' })
+      mcp = new FastMCP({ name: 'routes', logger: sink, logLevel: 'debug' })
       mcp.customRoute({ path: '/boom' }, () => {
         throw new Error('kaput')
       })
@@ -330,7 +337,10 @@ describe('customRoute() over the simple HTTP path', () => {
       const res = await fetch(`http://127.0.0.1:${port}/boom`)
       expect(res.status).toBe(500)
       expect(await res.json()).toEqual({ error: 'Internal Server Error' })
-      expect(errorSpy).toHaveBeenCalledWith('[fastmcp] custom route handler failed:', expect.any(Error))
+      expect(
+        calls.some((c) => c.level === 'error' && c.message.includes('custom route handler failed')),
+      ).toBe(true)
+      expect(errorSpy).not.toHaveBeenCalled()
     } finally {
       errorSpy.mockRestore()
     }
@@ -386,7 +396,7 @@ describe('customRoute() over the OAuth (express) path', () => {
     expect(res.headers.get('allow')).toBe('GET')
   })
 
-  it('OPTIONS on a route path never invokes the handler and falls through to the express default 404', async () => {
+  it('OPTIONS on a route path never invokes the handler — the global CORS preflight answers it', async () => {
     const handler = vi.fn(() => new Response('ok'))
     mcp = new FastMCP({ name: 'routes', oauth: { provider: oauthProvider() } })
     mcp.customRoute({ path: '/livez' }, handler)
@@ -394,7 +404,8 @@ describe('customRoute() over the OAuth (express) path', () => {
     const { port } = mcp.address!
 
     const res = await fetch(`http://127.0.0.1:${port}/livez`, { method: 'OPTIONS' })
-    expect(res.status).toBe(404)
+    expect(res.status).toBe(204)
+    expect(res.headers.get('access-control-allow-origin')).toBe('*')
     expect(handler).not.toHaveBeenCalled()
   })
 
