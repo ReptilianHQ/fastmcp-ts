@@ -71,7 +71,8 @@ export interface OAuthConfig {
   /**
    * Public URL of the MCP endpoint used as the RFC 9728 resource identifier.
    * Must use HTTPS except on a loopback host. Defaults to `issuerUrl`'s origin
-   * plus the configured MCP path.
+   * plus the configured MCP path. Query strings are unsupported by the built-in
+   * OAuth router; use external `auth` with `protectedResource` when one is needed.
    */
   resourceUrl?: URL
   /** Scopes supported by this server, advertised in OAuth metadata. */
@@ -419,9 +420,10 @@ function assertHttpUrl(value: unknown, label: string, requireHttps: boolean): as
   }
 }
 
-function resolveOAuthScopes(scopes: string[] | undefined, label: string): string[] | undefined {
-  if (scopes === undefined || scopes.length === 0) return undefined
+function resolveOAuthScopes(scopes: unknown, label: string): string[] | undefined {
+  if (scopes === undefined) return undefined
   if (!Array.isArray(scopes)) throw new TypeError(`${label} must be an array of OAuth scope tokens`)
+  if (scopes.length === 0) return undefined
   for (const [index, scope] of scopes.entries()) {
     // RFC 6749 scope-token excludes spaces, controls, double quotes, and backslashes.
     if (typeof scope !== 'string' || !/^[\x21\x23-\x5B\x5D-\x7E]+$/.test(scope)) {
@@ -2329,7 +2331,12 @@ export class FastMCP {
     const oauth = this._oauth!
     // Validate an operator-supplied public resource identifier before opening a
     // listener. The default depends on the actual bound port and is validated below.
-    if (oauth.resourceUrl) assertHttpUrl(oauth.resourceUrl, 'oauth.resourceUrl', true)
+    if (oauth.resourceUrl) {
+      assertHttpUrl(oauth.resourceUrl, 'oauth.resourceUrl', true)
+      if (oauth.resourceUrl.search) {
+        throw new TypeError('oauth.resourceUrl must not contain a query string')
+      }
+    }
     const oauthScopes = resolveOAuthScopes(oauth.scopes, 'oauth.scopes')
     const app = express()
 

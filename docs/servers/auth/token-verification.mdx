@@ -78,6 +78,8 @@ const server = new FastMCP({
 
 The same configuration works with `introspectionVerifier` when the authorization server issues opaque tokens. `protectedResource` applies to the HTTP listener started by `run()`; a framework that embeds `server.fetch()` owns its authentication and discovery routes at that boundary.
 
+The bundled `oauth` server also advertises its MCP resource, but its `resourceUrl` cannot contain a query string. Use `auth` with `protectedResource` when the resource identifier needs one; that route requires clients to request the exact derived path and query.
+
 ## Static tokens
 
 When there is no identity provider in the loop — a local development server, a script, an internal tool behind its own network boundary — a full verifier is more machinery than the job needs. `staticTokenVerifier` takes a plain map from token strings to the identity each one represents, so you can hand a teammate a known token and have it resolve to a known `clientId` and scope set with no infrastructure at all.

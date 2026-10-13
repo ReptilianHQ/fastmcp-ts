@@ -416,6 +416,34 @@ describe('Server — Authentication', () => {
       ).rejects.toThrow('oauth.scopes[1] must be a valid OAuth scope token')
       expect(invalidScopes.address).toBeNull()
       await expect(invalidScopes.close()).resolves.toBeUndefined()
+
+      for (const scopes of ['', null]) {
+        const malformedScopes = new FastMCP({
+          name: 'test-server',
+          oauth: {
+            provider: oauthProvider(),
+            scopes: scopes as unknown as string[],
+          },
+        })
+        await expect(
+          malformedScopes.run({ transport: 'http', port: 0, host: '127.0.0.1' }),
+        ).rejects.toThrow('oauth.scopes must be an array of OAuth scope tokens')
+        expect(malformedScopes.address).toBeNull()
+        await expect(malformedScopes.close()).resolves.toBeUndefined()
+      }
+
+      const queryResource = new FastMCP({
+        name: 'test-server',
+        oauth: {
+          provider: oauthProvider(),
+          resourceUrl: new URL('https://mcp.example.com/mcp?tenant=example'),
+        },
+      })
+      await expect(
+        queryResource.run({ transport: 'http', port: 0, host: '127.0.0.1' }),
+      ).rejects.toThrow('oauth.resourceUrl must not contain a query string')
+      expect(queryResource.address).toBeNull()
+      await expect(queryResource.close()).resolves.toBeUndefined()
     })
 
     it('rejects protected-resource discovery without a verifier or with a local OAuth server', () => {
