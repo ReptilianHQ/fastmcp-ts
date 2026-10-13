@@ -70,7 +70,8 @@ export interface OAuthConfig {
   issuerUrl?: URL
   /**
    * Public URL of the MCP endpoint used as the RFC 9728 resource identifier.
-   * Defaults to `issuerUrl`'s origin plus the configured MCP path.
+   * Must use HTTPS except on a loopback host. Defaults to `issuerUrl`'s origin
+   * plus the configured MCP path.
    */
   resourceUrl?: URL
   /** Scopes supported by this server, advertised in OAuth metadata. */
@@ -79,11 +80,11 @@ export interface OAuthConfig {
 
 /** RFC 9728 discovery for an MCP resource backed by an external authorization server. */
 export interface ProtectedResourceConfig {
-  /** Public URL of the MCP endpoint, including its path. */
+  /** Public HTTPS URL of the MCP endpoint, including its path (HTTP is allowed on loopback). */
   resourceUrl: URL
   /** Authorization servers that issue tokens accepted by `auth`. */
   authorizationServers: URL[]
-  /** Scopes understood by this resource server. */
+  /** RFC 6749 scope tokens understood by this resource server. An empty array is omitted. */
   scopes?: string[]
   /** Human-readable protected-resource name. */
   resourceName?: string
@@ -418,13 +419,25 @@ function assertHttpUrl(value: unknown, label: string, requireHttps: boolean): as
   }
 }
 
+function resolveOAuthScopes(scopes: string[] | undefined, label: string): string[] | undefined {
+  if (scopes === undefined || scopes.length === 0) return undefined
+  if (!Array.isArray(scopes)) throw new TypeError(`${label} must be an array of OAuth scope tokens`)
+  for (const [index, scope] of scopes.entries()) {
+    // RFC 6749 scope-token excludes spaces, controls, double quotes, and backslashes.
+    if (typeof scope !== 'string' || !/^[\x21\x23-\x5B\x5D-\x7E]+$/.test(scope)) {
+      throw new TypeError(`${label}[${index}] must be a valid OAuth scope token`)
+    }
+  }
+  return [...scopes]
+}
+
 function resolveProtectedResource(options: FastMCPOptions): ProtectedResourceConfig | undefined {
   const config = options.protectedResource
   if (!config) return undefined
   if (!options.auth) throw new TypeError('protectedResource requires auth')
   if (options.oauth) throw new TypeError('protectedResource cannot be combined with oauth')
 
-  assertHttpUrl(config.resourceUrl, 'protectedResource.resourceUrl', false)
+  assertHttpUrl(config.resourceUrl, 'protectedResource.resourceUrl', true)
   if (!Array.isArray(config.authorizationServers) || config.authorizationServers.length === 0) {
     throw new TypeError('protectedResource.authorizationServers must contain at least one URL')
   }
@@ -442,7 +455,7 @@ function resolveProtectedResource(options: FastMCPOptions): ProtectedResourceCon
     ...config,
     resourceUrl: new URL(config.resourceUrl),
     authorizationServers: config.authorizationServers.map((url) => new URL(url)),
-    scopes: config.scopes ? [...config.scopes] : undefined,
+    scopes: resolveOAuthScopes(config.scopes, 'protectedResource.scopes'),
     serviceDocumentationUrl: config.serviceDocumentationUrl
       ? new URL(config.serviceDocumentationUrl)
       : undefined,
@@ -465,9 +478,11 @@ function serveProtectedResourceMetadata(
   res: ServerResponse,
   config: ProtectedResourceConfig,
 ): boolean {
-  const pathname = req.url?.split('?')[0] ?? ''
+  const requestUrl = new URL(req.url ?? '/', 'http://localhost')
   const metadataUrl = new URL(protectedResourceMetadataUrl(config))
-  if (pathname !== metadataUrl.pathname) return false
+  if (requestUrl.pathname !== metadataUrl.pathname || requestUrl.search !== metadataUrl.search) {
+    return false
+  }
 
   const allow = 'GET, HEAD, OPTIONS'
   if (req.method === 'OPTIONS') {
@@ -2312,6 +2327,10 @@ export class FastMCP {
     )
 
     const oauth = this._oauth!
+    // Validate an operator-supplied public resource identifier before opening a
+    // listener. The default depends on the actual bound port and is validated below.
+    if (oauth.resourceUrl) assertHttpUrl(oauth.resourceUrl, 'oauth.resourceUrl', true)
+    const oauthScopes = resolveOAuthScopes(oauth.scopes, 'oauth.scopes')
     const app = express()
 
     // Global CORS preflight + MCP-endpoint headers, mirroring _runHttpSimple:
@@ -2361,7 +2380,7 @@ export class FastMCP {
     const bound = httpServer.address() as AddressInfo
     const issuerUrl = oauth.issuerUrl ?? new URL(`http://${bound.address}:${bound.port}`)
     const resourceUrl = oauth.resourceUrl ?? new URL(path, issuerUrl)
-    assertHttpUrl(resourceUrl, 'oauth.resourceUrl', false)
+    assertHttpUrl(resourceUrl, 'oauth.resourceUrl', true)
     const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(resourceUrl)
 
     // OAuth endpoints (authorize, token, register, metadata)
@@ -2369,7 +2388,7 @@ export class FastMCP {
       mcpAuthRouter({
         provider: oauth.provider,
         issuerUrl,
-        scopesSupported: oauth.scopes,
+        scopesSupported: oauthScopes,
         resourceServerUrl: resourceUrl,
       }),
     )

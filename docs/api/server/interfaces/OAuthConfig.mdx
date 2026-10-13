@@ -37,10 +37,11 @@ OAuth server provider implementing the authorization and token flow.
 optional resourceUrl?: URL;
 ```
 
-Defined in: [server/FastMCP.ts:75](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L75)
+Defined in: [server/FastMCP.ts:76](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L76)
 
 Public URL of the MCP endpoint used as the RFC 9728 resource identifier.
-Defaults to `issuerUrl`'s origin plus the configured MCP path.
+Must use HTTPS except on a loopback host. Defaults to `issuerUrl`'s origin
+plus the configured MCP path.
 
 ***
 
@@ -50,6 +51,6 @@ Defaults to `issuerUrl`'s origin plus the configured MCP path.
 optional scopes?: string[];
 ```
 
-Defined in: [server/FastMCP.ts:77](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L77)
+Defined in: [server/FastMCP.ts:78](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L78)
 
 Scopes supported by this server, advertised in OAuth metadata.

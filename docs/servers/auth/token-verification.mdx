@@ -55,7 +55,7 @@ The response maps the same way a JWT does: `client_id` to `clientId`, the space-
 
 A verifier establishes whether a token is valid, while OAuth discovery tells an MCP client where to obtain one. When another service owns authorization, configure `protectedResource` alongside `auth`. FastMCP then serves RFC 9728 Protected Resource Metadata at the path derived from `resourceUrl` and includes that metadata URL in every Bearer `401` challenge. The metadata points clients directly to your authorization server; FastMCP continues to own only token verification.
 
-Use the public MCP endpoint as `resourceUrl`, including its `/mcp` path. This value becomes the OAuth resource identifier and must match the endpoint clients connect to. List each authorization server that issues tokens accepted by the configured verifier.
+Use the public MCP endpoint as `resourceUrl`, including its `/mcp` path. This value becomes the OAuth resource identifier and must match the endpoint clients connect to. Production resource identifiers must use HTTPS; plain HTTP is accepted only for loopback development URLs. If the identifier contains a query, clients must request the generated metadata URL with that exact query. List each authorization server that issues tokens accepted by the configured verifier. Each `scopes` entry must be one RFC 6749 scope token; omit `scopes` or pass an empty array when the resource does not advertise any.
 
 ```typescript server.ts
 import { FastMCP, jwtVerifier } from '@prefecthq/fastmcp-ts/server'
