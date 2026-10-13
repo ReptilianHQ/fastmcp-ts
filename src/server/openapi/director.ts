@@ -9,7 +9,8 @@
  */
 
 import type { HTTPRoute, ParameterInfo } from './types'
-import { isPlainObject, warn } from './internal'
+import { isPlainObject, truthy, warn } from './internal'
+import type { ResolvedLogger } from '../logger'
 
 /** A fully built HTTP request, ready to hand to fetch. */
 export interface DirectedRequest {
@@ -45,7 +46,11 @@ interface UnflattenedArguments {
 }
 
 /** Map flat arguments back to their OpenAPI locations via the parameter map. */
-function unflattenArguments(route: HTTPRoute, flatArgs: Record<string, unknown>): UnflattenedArguments {
+function unflattenArguments(
+  route: HTTPRoute,
+  flatArgs: Record<string, unknown>,
+  logger?: ResolvedLogger,
+): UnflattenedArguments {
   const pathParams: Record<string, unknown> = {}
   const queryParams: Record<string, unknown> = {}
   const headerParams: Record<string, unknown> = {}
@@ -66,7 +71,7 @@ function unflattenArguments(route: HTTPRoute, flatArgs: Record<string, unknown>)
 
       const mapping = route.parameterMap[argName]
       if (mapping === undefined) {
-        warn(`Argument '${argName}' not found in parameter map for ${route.operationId ?? route.path}`)
+        warn(`Argument '${argName}' not found in parameter map for ${route.operationId ?? route.path}`, logger)
         continue
       }
       buckets[mapping.location][mapping.openapiName] = value
@@ -98,8 +103,10 @@ function unflattenArguments(route: HTTPRoute, flatArgs: Record<string, unknown>)
     }
   }
 
-  // Body construction: an object-typed body schema keeps the property map; a
-  // non-object schema with exactly one property sends the value directly.
+  // Body construction: an object-typed OR object-like (has at least one
+  // property, e.g. allOf-merged) body schema keeps the property map; a
+  // genuine non-object schema with exactly one property sends the value
+  // directly.
   let body: unknown
   if (Object.keys(bodyProps).length > 0) {
     const contentSchema = route.requestBody?.contentSchema
@@ -107,7 +114,10 @@ function unflattenArguments(route: HTTPRoute, flatArgs: Record<string, unknown>)
       const contentType = Object.keys(contentSchema)[0]
       const bodySchema = contentSchema[contentType]
 
-      if (isPlainObject(bodySchema) && bodySchema.type === 'object') {
+      if (
+        isPlainObject(bodySchema) &&
+        (bodySchema.type === 'object' || truthy(bodySchema.properties))
+      ) {
         body = bodyProps
       } else if (Object.keys(bodyProps).length === 1) {
         body = Object.values(bodyProps)[0]
@@ -208,10 +218,12 @@ export function buildRequest(
   route: HTTPRoute,
   flatArgs: Record<string, unknown>,
   baseUrl: string,
+  logger?: ResolvedLogger,
 ): DirectedRequest {
   const { pathParams, queryParams, headerParams, cookieParams, body } = unflattenArguments(
     route,
     flatArgs,
+    logger,
   )
 
   const serializedQuery = serializeQueryParams(route, queryParams)

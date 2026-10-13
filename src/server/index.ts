@@ -8,6 +8,8 @@ export type {
   OAuthConfig,
 } from './FastMCP'
 export type { CustomRouteConfig, CustomRouteHandler, HealthOptions } from './customRoutes'
+export type { CorsOptions } from './cors'
+export type { Logger, FrameworkLogLevel } from './logger'
 // Re-exported for fetch-native integrations and FastMCPOptions.eventBus implementers.
 export type {
   AuthInfo,
