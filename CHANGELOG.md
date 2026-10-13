@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.7.3-reptilian.1
+
 ### Minor Changes
 
 - Advertise external OAuth servers through RFC 9728 protected-resource metadata.
