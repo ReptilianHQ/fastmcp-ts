@@ -23,6 +23,6 @@ are immutable; rerunning the workflow for an existing release fails.
 ## Versioning
 
 Repack versions append a ReptilianHQ identifier to the upstream version, for
-example `1.7.3-reptilian.0`. Runtime changes must remain separate from an
+example `1.7.3-reptilian.1`. Runtime changes must remain separate from an
 upstream refresh and must be documented explicitly. Consumers can move back to
 `@prefecthq/fastmcp-ts` after the static-token hardening ships upstream.
