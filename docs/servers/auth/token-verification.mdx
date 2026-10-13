@@ -51,6 +51,35 @@ const server = new FastMCP({
 
 The response maps the same way a JWT does: `client_id` to `clientId`, the space-delimited `scope` to `scopes`, `exp` to `expiresAt`, and the whole response body to `claims`. An inactive token, or any non-`200` from the endpoint, is rejected.
 
+## External OAuth
+
+A verifier establishes whether a token is valid, while OAuth discovery tells an MCP client where to obtain one. When another service owns authorization, configure `protectedResource` alongside `auth`. FastMCP then serves RFC 9728 Protected Resource Metadata at the path derived from `resourceUrl` and includes that metadata URL in every Bearer `401` challenge. The metadata points clients directly to your authorization server; FastMCP continues to own only token verification.
+
+Use the public MCP endpoint as `resourceUrl`, including its `/mcp` path. This value becomes the OAuth resource identifier and must match the endpoint clients connect to. Production resource identifiers must use HTTPS; plain HTTP is accepted only for loopback development URLs. If the identifier contains a query, clients must request the generated metadata URL with that exact query. List each authorization server that issues tokens accepted by the configured verifier. Each `scopes` entry must be one RFC 6749 scope token; omit `scopes` or pass an empty array when the resource does not advertise any.
+
+```typescript server.ts
+import { FastMCP, jwtVerifier } from '@prefecthq/fastmcp-ts/server'
+
+const server = new FastMCP({
+  name: 'secure-server',
+  auth: jwtVerifier({
+    jwksUri: 'https://auth.example.com/.well-known/jwks.json',
+    issuer: 'https://auth.example.com',
+    audience: 'https://mcp.example.com/mcp',
+  }),
+  protectedResource: {
+    resourceUrl: new URL('https://mcp.example.com/mcp'),
+    authorizationServers: [new URL('https://auth.example.com')],
+    scopes: ['mcp:read', 'mcp:write'],
+    resourceName: 'Example MCP',
+  },
+})
+```
+
+The same configuration works with `introspectionVerifier` when the authorization server issues opaque tokens. `protectedResource` applies to the HTTP listener started by `run()`; a framework that embeds `server.fetch()` owns its authentication and discovery routes at that boundary.
+
+The bundled `oauth` server also advertises its MCP resource, but its `resourceUrl` cannot contain a query string. Use `auth` with `protectedResource` when the resource identifier needs one; that route requires clients to request the exact derived path and query.
+
 ## Static tokens
 
 When there is no identity provider in the loop — a local development server, a script, an internal tool behind its own network boundary — a full verifier is more machinery than the job needs. `staticTokenVerifier` takes a plain map from token strings to the identity each one represents, so you can hand a teammate a known token and have it resolve to a known `clientId` and scope set with no infrastructure at all.

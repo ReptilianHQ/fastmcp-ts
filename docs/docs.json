@@ -175,6 +175,7 @@
                   "api/server/interfaces/PromptConfig",
                   "api/server/interfaces/PromptMessage",
                   "api/server/interfaces/PromptView",
+                  "api/server/interfaces/ProtectedResourceConfig",
                   "api/server/interfaces/RequestBodyInfo",
                   "api/server/interfaces/RequestVerifier",
                   "api/server/interfaces/ResourceAnnotations",

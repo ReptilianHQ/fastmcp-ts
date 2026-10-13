@@ -1,5 +1,11 @@
 # @reptilianhq/fastmcp-ts
 
+## Unreleased
+
+### Minor Changes
+
+- Advertise external OAuth servers through RFC 9728 protected-resource metadata.
+
 ## 1.7.3-reptilian.0
 
 ### Minor Changes

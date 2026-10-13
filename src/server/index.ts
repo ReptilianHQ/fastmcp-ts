@@ -6,6 +6,7 @@ export type {
   ToolConfig,
   ToolAnnotations,
   OAuthConfig,
+  ProtectedResourceConfig,
 } from './FastMCP'
 export type { CustomRouteConfig, CustomRouteHandler, HealthOptions } from './customRoutes'
 export type { CorsOptions } from './cors'
