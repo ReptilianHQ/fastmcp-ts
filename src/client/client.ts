@@ -550,9 +550,8 @@ export class Client implements IClient {
     options?: RequestOptions,
   ): Promise<void> {
     await this._recoverSession()
-    const previousHandler = this._resourceSubscriptions.get(uri)
-    this._resourceSubscriptions.set(uri, handler)
     if (this._sdk().getProtocolEra() === 'modern') {
+      this._resourceSubscriptions.set(uri, handler)
       await this._refreshResourceListenSubscription()
       // The listen ack reports the honored subset of the requested filter. A server
       // that does not advertise `resources.subscribe` prunes `resourceSubscriptions`
@@ -569,20 +568,15 @@ export class Client implements IClient {
         )
       }
     } else {
-      try {
-        await this._reauthRetry(() =>
-          this._sdk().subscribeResource(
-            { uri, ...this._metaParams() },
-            this._toSdkOptions(options, undefined, this._defaultOptions.resource?.timeout),
-          ),
-        )
-      } catch (error) {
-        if (this._resourceSubscriptions.get(uri) === handler) {
-          if (previousHandler) this._resourceSubscriptions.set(uri, previousHandler)
-          else this._resourceSubscriptions.delete(uri)
-        }
-        throw error
-      }
+      await this._reauthRetry(() =>
+        this._sdk().subscribeResource(
+          { uri, ...this._metaParams() },
+          this._toSdkOptions(options, undefined, this._defaultOptions.resource?.timeout),
+        ),
+      )
+      // Only successful registrations are session state. Concurrent rejected
+      // registrations must never leave another failed handler to restore.
+      this._resourceSubscriptions.set(uri, handler)
     }
   }
 

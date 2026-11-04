@@ -24,6 +24,7 @@ async function fixture(connect = true) {
   let streaming = false
   let logAfterSubscription = false
   const rejectedSubscriptions = new Set<string>()
+  let notifyResource: string | undefined
   const failedStreamGets = new Map<string, number>()
   const streams = new Set<ServerResponse>()
   let holdInit: ReturnType<typeof deferred> | undefined
@@ -97,6 +98,13 @@ async function fixture(connect = true) {
         return
       }
     }
+    if (message.method === 'tools/list' && notifyResource) {
+      reply(res, 200, [
+        { jsonrpc: '2.0', id: message.id, result: { tools: [] } },
+        { jsonrpc: '2.0', method: 'notifications/resources/updated', params: { uri: notifyResource } },
+      ])
+      return
+    }
     reply(res, 200, { jsonrpc: '2.0', id: message.id,
       result: message.method === 'tools/list' ? { tools: [] } : {} })
   })
@@ -116,6 +124,7 @@ async function fixture(connect = true) {
     stream: () => { streaming = true },
     logAfterSubscription: () => { logAfterSubscription = true },
     rejectSubscription: (uri: string) => { rejectedSubscriptions.add(uri) },
+    notifyResourceOnList: (uri: string) => { notifyResource = uri },
     streamFailures: (id: string) => failedStreamGets.get(id) ?? 0,
     failInitialization: (status: number) => { initializationFailure = status },
     fail: (status: number) => { failure = status },
@@ -243,6 +252,34 @@ describe('expired legacy HTTP sessions', () => {
     await expect(f.client.callTool('change-state')).resolves.toBeDefined()
     expect(f.subscriptions).toEqual(['test://missing'])
     expect(f.counts()).toEqual({ initializes: 2, executions: 1 })
+  })
+
+  it('does not retain either handler when concurrent registrations for one resource fail', async () => {
+    const f = await fixture()
+    f.rejectSubscription('test://missing')
+    const results = await Promise.allSettled([
+      f.client.subscribeResource('test://missing', () => {}),
+      f.client.subscribeResource('test://missing', () => {}),
+    ])
+    expect(results.map(result => result.status)).toEqual(['rejected', 'rejected'])
+    f.expire()
+    await expect(f.client.listTools()).rejects.toMatchObject({ status: 404 })
+    await expect(f.client.callTool('change-state')).resolves.toBeDefined()
+    expect(f.subscriptions).toEqual(['test://missing', 'test://missing'])
+    expect(f.counts()).toEqual({ initializes: 2, executions: 1 })
+  })
+
+  it('keeps the confirmed handler when its replacement is rejected', async () => {
+    const f = await fixture()
+    let originalUpdates = 0
+    let rejectedUpdates = 0
+    await f.client.subscribeResource('test://resource', () => { originalUpdates++ })
+    f.rejectSubscription('test://resource')
+    await expect(f.client.subscribeResource('test://resource', () => { rejectedUpdates++ })).rejects.toThrow('Resource not found')
+    f.notifyResourceOnList('test://resource')
+    await f.client.listTools()
+    expect(originalUpdates).toBe(1)
+    expect(rejectedUpdates).toBe(0)
   })
 
   it('can remove a vanished resource after its restoration fails', async () => {
