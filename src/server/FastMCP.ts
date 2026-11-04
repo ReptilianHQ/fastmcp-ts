@@ -19,6 +19,7 @@ import type { Readable, Writable } from 'node:stream'
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { AuthorizationError } from './auth/types'
+import { writeVerifierError } from './auth/httpError'
 import type { TokenVerifier, AccessToken } from './auth/types'
 import type { RequestVerifier } from './auth/types'
 import { isRequestVerifier } from './auth/types'
@@ -2471,18 +2472,7 @@ export class FastMCP {
           try {
             accessToken = await auth.verifyRequest(nodeRequestToHttpContext(req))
           } catch (err) {
-            if (err instanceof AuthorizationError) {
-              res
-                .writeHead(403, { 'Content-Type': 'application/json' })
-                .end(JSON.stringify({ error: err.message }))
-            } else {
-              res
-                .writeHead(401, {
-                  'Content-Type': 'application/json',
-                  ...(protectedResource ? { 'WWW-Authenticate': challenge } : {}),
-                })
-                .end(JSON.stringify({ error: err instanceof Error ? err.message : 'Authentication failed' }))
-            }
+            writeVerifierError(res, err, protectedResource ? challenge : undefined)
             return
           }
           if (!accessToken.token) {
@@ -2526,15 +2516,7 @@ export class FastMCP {
               extra: accessToken.claims,
             }
           } catch (err) {
-            if (err instanceof AuthorizationError) {
-              res
-                .writeHead(403, { 'Content-Type': 'application/json' })
-                .end(JSON.stringify({ error: err.message }))
-            } else {
-              res
-                .writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': challenge })
-                .end(JSON.stringify({ error: err instanceof Error ? err.message : 'Authentication failed' }))
-            }
+            writeVerifierError(res, err, challenge)
             return
           }
         }

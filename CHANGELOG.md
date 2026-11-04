@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.7.3-reptilian.3
+
+- Keep verification outages distinct from invalid credentials across MCP authentication paths.
+
 ## 1.7.3-reptilian.2
 
 - Recover expired HTTP sessions without replaying failed operations or losing in-flight results.

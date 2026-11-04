@@ -49,7 +49,7 @@ const server = new FastMCP({
 })
 ```
 
-The response maps the same way a JWT does: `client_id` to `clientId`, the space-delimited `scope` to `scopes`, `exp` to `expiresAt`, and the whole response body to `claims`. An inactive token, or any non-`200` from the endpoint, is rejected.
+The response maps the same way a JWT does: `client_id` to `clientId`, the space-delimited `scope` to `scopes`, `exp` to `expiresAt`, and the whole response body to `claims`. An explicit `active: false` verdict returns HTTP `401`. If introspection cannot establish a verdict, FastMCP returns `503` without a bearer challenge. This includes non-success HTTP responses, connection failures, timeouts, and malformed responses. The request does not reach a handler. Introspection has a five-second deadline, configurable through `timeoutMs`, and does not follow redirects. Valid upstream `Retry-After` guidance is converted to seconds and limited to five minutes.
 
 ## External OAuth
 
@@ -128,6 +128,12 @@ const server = new FastMCP({
 ```
 
 Order the verifiers cheapest-first: each is only consulted when the ones before it reject, so putting the local static map ahead of a remote introspection call avoids a network round-trip for tokens the map already covers. Because every verifier yields the same `AccessToken` shape, the rest of your server — context, scope checks, per-component rules — never needs to know which one matched.
+
+## Verification failures
+
+Custom token and request verifiers can throw `VerificationUnavailableError` when an external dependency prevents verification. FastMCP returns a fixed `503` message and leaves diagnostic details in the error's `cause`. Pass the upstream `Retry-After` header through the error's `retryAfter` option when available; the library validates and bounds it before sending a response.
+
+`multiAuth` still accepts the first successful verifier. If none succeeds and at least one is unavailable, it preserves that failure as `503`; only definitive rejections produce `401`.
 
 ## Header-established identity
 
