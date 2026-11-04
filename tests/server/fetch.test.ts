@@ -386,5 +386,8 @@ describe('FastMCP.fetch', () => {
       body: JSON.stringify(TOOLS_LIST),
     })
     expect(unknownSession.status).toBe(404)
+    expect(await unknownSession.json()).toEqual({
+      jsonrpc: '2.0', id: null, error: { code: -32001, message: 'Session not found' },
+    })
   })
 })

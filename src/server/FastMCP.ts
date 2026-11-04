@@ -2254,7 +2254,9 @@ export class FastMCP {
     if (sessionId) {
       const existing = this._sessions.get(sessionId)
       if (!existing) {
-        res.writeHead(404, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'Session not found' }))
+        res.writeHead(404, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+          jsonrpc: '2.0', id: null, error: { code: -32001, message: 'Session not found' },
+        }))
         return
       }
       mcpTransport = existing.transport

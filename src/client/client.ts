@@ -1,4 +1,4 @@
-import { UnauthorizedError, Client as SdkClient, LOG_LEVEL_META_KEY } from "@modelcontextprotocol/client";
+import { UnauthorizedError, Client as SdkClient, LOG_LEVEL_META_KEY, SdkHttpError, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type {
   ClientCapabilities,
   RequestOptions as SdkRequestOptions,
@@ -69,6 +69,12 @@ export class Client implements IClient {
   private _sdkClient: SdkClient | null = null
   private _refCount = 0
   private _connectPromise: Promise<void> | null = null
+  private _sessionExpired = false
+  private _sessionRecovery: Promise<void> | null = null
+  private _connectionGeneration = 0
+  private readonly _pendingClients = new Set<SdkClient>()
+  private readonly _activeRequests = new Map<SdkClient, number>()
+  private readonly _retiredClients = new Set<SdkClient>()
   private readonly _resourceSubscriptions = new Map<string, ResourceUpdateHandler>()
   /** The modern-era (2026-07-28) `subscriptions/listen` stream backing all active
    * resource subscriptions — resources/subscribe and resources/unsubscribe are
@@ -155,7 +161,11 @@ export class Client implements IClient {
     }
 
     // Already connected — just bump the ref count.
-    if (this._sdkClient) return
+    if (this._sdkClient) {
+      try { await this._recoverSession() }
+      catch (err) { this._refCount = Math.max(0, this._refCount - 1); throw err }
+      return
+    }
 
     this._connectPromise = this._doConnect().finally(() => {
       this._connectPromise = null
@@ -170,6 +180,7 @@ export class Client implements IClient {
   }
 
   private async _doConnect(): Promise<void> {
+    const generation = this._connectionGeneration
     const sdkClient = new SdkClient(
       this._clientInfo,
       {
@@ -191,6 +202,21 @@ export class Client implements IClient {
       legacySSE: this._legacySSE,
       versionNegotiation: this._versionNegotiation,
     })
+    let connectedTransport = transport
+
+    // A lost HTTP session invalidates only this connection, not an operation's
+    // execution outcome. The next explicit request initializes a fresh client;
+    // the failed request is never replayed. Retire the old GET stream so it
+    // cannot keep polling an id the server has already discarded.
+    const onerror = sdkClient.onerror
+    sdkClient.onerror = (error) => {
+      if (this._sdkClient === sdkClient && connectedTransport instanceof StreamableHTTPClientTransport
+        && connectedTransport.sessionId && error instanceof SdkHttpError && error.status === 404) {
+        this._sessionExpired = true
+        this._retireClient(sdkClient)
+      }
+      onerror?.(error)
+    }
 
     // Bind the server URL into the OAuth provider before the SDK transport
     // reads clientMetadata or tokens() so storage keys are properly namespaced.
@@ -201,38 +227,70 @@ export class Client implements IClient {
 
     if (beforeConnect) await beforeConnect()
 
-    this._transport = transport
+    this._pendingClients.add(sdkClient)
     try {
-      await sdkClient.connect(transport, this._prior ? { prior: this._prior } : undefined)
-    } catch (err) {
-      if (err instanceof UnauthorizedError && this._auth instanceof OAuth) {
-        // The SDK opened the browser and is waiting for the user to authorize.
-        // Wait for the callback to receive the full callback params (code +,
-        // when present, the RFC 9207 `iss` parameter), then finish auth on the
-        // original transport (it holds the discovery/PKCE context) to exchange
-        // the code for tokens. Passing URLSearchParams (rather than a bare
-        // code string) lets the SDK validate `iss` against the recorded
-        // issuer before redeeming the code.
-        const callbackParams = await this._auth.waitForCallback()
-        await this._finishAuth(transport, callbackParams)
-        // The original transport is already started and cannot be reconnected;
-        // build a fresh one for the authenticated attempt. It reads the tokens
-        // finishAuth stored in the auth provider. Pass the same resolution
-        // options as the primary attempt so the retry keeps the SSE opt-in and
-        // the era-negotiation mode.
-        const retry = await resolveTransport(this._input, this._auth, {
-          legacySSE: this._legacySSE,
-          versionNegotiation: this._versionNegotiation,
-        })
-        if (retry.beforeConnect) await retry.beforeConnect()
-        this._transport = retry.transport
-        await sdkClient.connect(retry.transport)
-      } else {
-        throw err
+      try {
+        await sdkClient.connect(transport, this._prior ? { prior: this._prior } : undefined)
+      } catch (err) {
+        if (err instanceof UnauthorizedError && this._auth instanceof OAuth) {
+          // The SDK opened the browser and is waiting for the user to authorize.
+          // Wait for the callback to receive the full callback params (code +,
+          // when present, the RFC 9207 `iss` parameter), then finish auth on the
+          // original transport (it holds the discovery/PKCE context) to exchange
+          // the code for tokens. Passing URLSearchParams (rather than a bare
+          // code string) lets the SDK validate `iss` against the recorded
+          // issuer before redeeming the code.
+          const callbackParams = await this._auth.waitForCallback()
+          await this._finishAuth(transport, callbackParams)
+          // The original transport is already started and cannot be reconnected;
+          // build a fresh one for the authenticated attempt. It reads the tokens
+          // finishAuth stored in the auth provider. Pass the same resolution
+          // options as the primary attempt so the retry keeps the SSE opt-in and
+          // the era-negotiation mode.
+          const retry = await resolveTransport(this._input, this._auth, {
+            legacySSE: this._legacySSE,
+            versionNegotiation: this._versionNegotiation,
+          })
+          if (retry.beforeConnect) await retry.beforeConnect()
+          // Keep the authenticated transport for subsequent step-up rounds.
+          connectedTransport = retry.transport
+          await sdkClient.connect(retry.transport)
+        } else {
+          throw err
+        }
       }
+      if (generation !== this._connectionGeneration || this._refCount === 0) {
+        throw new Error('Client closed while connecting')
+      }
+      // Resource subscriptions are session state, unlike tool calls. Restore
+      // only subscriptions the caller explicitly registered on the old session.
+      if (this._sessionExpired && sdkClient.getProtocolEra() === 'legacy') {
+        for (const uri of this._resourceSubscriptions.keys()) await sdkClient.subscribeResource({ uri })
+      }
+      this._sdkClient = sdkClient
+      this._transport = connectedTransport
+      this._sessionExpired = false
+    } catch (error) {
+      await sdkClient.close().catch(() => {})
+      throw error
+    } finally {
+      this._pendingClients.delete(sdkClient)
     }
+  }
 
-    this._sdkClient = sdkClient
+  private async _recoverSession(): Promise<void> {
+    if (!this._sessionExpired) return
+    if (!this._refCount) throw new Error('Client is not connected. Call connect() first.')
+    this._sessionRecovery ??= this._doConnect().finally(() => { this._sessionRecovery = null })
+    await this._sessionRecovery
+  }
+
+  private _retireClient(client: SdkClient): void {
+    this._retiredClients.add(client)
+    if (!this._activeRequests.get(client)) {
+      this._retiredClients.delete(client)
+      void client.close().catch(() => {})
+    }
   }
 
   private _extractServerUrl(): string | undefined {
@@ -259,6 +317,7 @@ export class Client implements IClient {
   async close(): Promise<void> {
     this._refCount = Math.max(0, this._refCount - 1)
     if (this._refCount > 0) return
+    this._connectionGeneration++
 
     // Close explicitly (and first) so its closure reason is 'local', not 'remote' —
     // otherwise the resource-subscription robustness handler above would try to
@@ -270,7 +329,11 @@ export class Client implements IClient {
 
     const sdk = this._sdkClient
     this._sdkClient = null
-    if (sdk) await sdk.close()
+    this._sessionExpired = false
+    const clients = new Set([...this._pendingClients, ...this._retiredClients, ...(sdk ? [sdk] : [])])
+    await Promise.all([...clients].map(client => client.close().catch(() => {})))
+    this._retiredClients.clear()
+    this._transport = undefined
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -278,7 +341,7 @@ export class Client implements IClient {
   }
 
   isConnected(): boolean {
-    return this._sdkClient !== null
+    return this._sdkClient !== null && !this._sessionExpired
   }
 
   /** Creates a connected MultiServerClient when given a multi-entry McpConfig. */
@@ -317,6 +380,7 @@ export class Client implements IClient {
    * throw-on-failure contract.
    */
   async ping(options?: RequestOptions): Promise<boolean> {
+    await this._recoverSession()
     if (this.getProtocolEra() === 'modern') {
       await this._reauthRetry(() => this._sdk().discover(this._toSdkOptions(options)))
       return true
@@ -480,6 +544,7 @@ export class Client implements IClient {
     handler: ResourceUpdateHandler,
     options?: RequestOptions,
   ): Promise<void> {
+    await this._recoverSession()
     this._resourceSubscriptions.set(uri, handler)
     if (this._sdk().getProtocolEra() === 'modern') {
       await this._refreshResourceListenSubscription()
@@ -508,6 +573,7 @@ export class Client implements IClient {
   }
 
   async unsubscribeResource(uri: string, options?: RequestOptions): Promise<void> {
+    await this._recoverSession()
     this._resourceSubscriptions.delete(uri)
     if (this._sdk().getProtocolEra() === 'modern') {
       await this._refreshResourceListenSubscription()
@@ -620,6 +686,7 @@ export class Client implements IClient {
    * passes one explicitly (there is no such call site in this class today).
    */
   async setLogLevel(level: LoggingLevel, options?: RequestOptions): Promise<void> {
+    await this._recoverSession()
     if (this.getProtocolEra() === 'modern') {
       this._logLevel = level
       return
@@ -694,8 +761,11 @@ export class Client implements IClient {
    * second popup.
    */
   private async _reauthRetry<T>(op: () => Promise<T>): Promise<T> {
+    await this._recoverSession()
     let rounds = 0
     for (;;) {
+      const selected = this._sdk()
+      this._activeRequests.set(selected, (this._activeRequests.get(selected) ?? 0) + 1)
       try {
         return await op()
       } catch (err) {
@@ -705,6 +775,13 @@ export class Client implements IClient {
         if (rounds >= Client._MAX_REAUTH_ROUNDS) throw err
         rounds++
         await this._reauthorize(this._auth)
+      } finally {
+        const remaining = (this._activeRequests.get(selected) ?? 1) - 1
+        if (remaining) this._activeRequests.set(selected, remaining)
+        else {
+          this._activeRequests.delete(selected)
+          if (this._retiredClients.has(selected)) this._retireClient(selected)
+        }
       }
     }
   }
