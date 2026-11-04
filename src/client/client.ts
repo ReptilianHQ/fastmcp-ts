@@ -156,7 +156,8 @@ export class Client implements IClient {
 
     // If another concurrent connect() is in progress, wait for it.
     if (this._connectPromise) {
-      await this._connectPromise
+      try { await this._connectPromise }
+      catch (err) { this._refCount = Math.max(0, this._refCount - 1); throw err }
       return
     }
 
@@ -210,7 +211,8 @@ export class Client implements IClient {
     // cannot keep polling an id the server has already discarded.
     const onerror = sdkClient.onerror
     sdkClient.onerror = (error) => {
-      if (this._sdkClient === sdkClient && connectedTransport instanceof StreamableHTTPClientTransport
+      if (this._sdkClient === sdkClient && connectedTransport !== this._input
+        && connectedTransport instanceof StreamableHTTPClientTransport
         && connectedTransport.sessionId && error instanceof SdkHttpError && error.status === 404) {
         this._sessionExpired = true
         this._retireClient(sdkClient)
@@ -266,6 +268,9 @@ export class Client implements IClient {
       // only subscriptions the caller explicitly registered on the old session.
       if (this._sessionExpired && sdkClient.getProtocolEra() === 'legacy') {
         for (const uri of this._resourceSubscriptions.keys()) await sdkClient.subscribeResource({ uri })
+      }
+      if (generation !== this._connectionGeneration || this._refCount === 0) {
+        throw new Error('Client closed while connecting')
       }
       this._sdkClient = sdkClient
       this._transport = connectedTransport

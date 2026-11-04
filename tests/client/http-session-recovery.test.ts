@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createServer } from 'node:http'
 import type { ServerResponse } from 'node:http'
 import { Client } from 'fastmcp-ts/client'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 
 function deferred() {
   let resolve!: () => void
@@ -13,7 +14,7 @@ const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close() })
 
 /** Real HTTP protocol fixture; dispatch counts distinguish reconnecting from replaying a tool. */
-async function fixture() {
+async function fixture(connect = true) {
   let session = ''
   let initializes = 0
   let executions = 0
@@ -21,13 +22,16 @@ async function fixture() {
   let toolError = false
   let initializationFailure = 0
   let streaming = false
+  let logAfterSubscription = false
   const failedStreamGets = new Map<string, number>()
   const streams = new Set<ServerResponse>()
   let holdInit: ReturnType<typeof deferred> | undefined
   let holdTool: ReturnType<typeof deferred> | undefined
+  let holdSubscription: ReturnType<typeof deferred> | undefined
   const initStarted = deferred()
   const toolStarted = deferred()
   const streamOpened = deferred()
+  const subscriptionStarted = deferred()
   const subscriptions: string[] = []
   const reply = (res: ServerResponse, status: number, body: unknown) => {
     if (!res.destroyed) res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
@@ -52,7 +56,7 @@ async function fixture() {
     const message = bytes ? JSON.parse(bytes) : {}
     if (message.method === 'initialize') {
       initializes++
-      if (initializes > 1 && holdInit) { initStarted.resolve(); await holdInit.promise }
+      if (holdInit) { initStarted.resolve(); await holdInit.promise }
       if (initializationFailure) { reply(res, initializationFailure, {}); return }
       session = `session-${initializes}`
       res.setHeader('mcp-session-id', session)
@@ -77,28 +81,42 @@ async function fixture() {
       } })
       return
     }
-    if (message.method === 'resources/subscribe') subscriptions.push(message.params.uri)
+    if (message.method === 'resources/subscribe') {
+      subscriptions.push(message.params.uri)
+      if (holdSubscription) { subscriptionStarted.resolve(); await holdSubscription.promise }
+      if (logAfterSubscription) {
+        reply(res, 200, [
+          { jsonrpc: '2.0', id: message.id, result: {} },
+          { jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', data: 'restored' } },
+        ])
+        return
+      }
+    }
     reply(res, 200, { jsonrpc: '2.0', id: message.id,
       result: message.method === 'tools/list' ? { tools: [] } : {} })
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   cleanups.push(async () => {
-    holdInit?.resolve(); holdTool?.resolve(); server.closeAllConnections()
+    holdInit?.resolve(); holdTool?.resolve(); holdSubscription?.resolve(); server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))
   })
   const address = server.address() as { port: number }
-  const client = await Client.connect(`http://127.0.0.1:${address.port}/mcp`, { versionNegotiation: { mode: 'legacy' } })
+  const url = `http://127.0.0.1:${address.port}/mcp`
+  const client = new Client(url, { versionNegotiation: { mode: 'legacy' } })
+  if (connect) await client.connect()
   cleanups.push(() => client.close())
-  return { client, subscriptions, initStarted, toolStarted, streamOpened,
+  return { client, url, subscriptions, initStarted, toolStarted, streamOpened, subscriptionStarted,
     counts: () => ({ initializes, executions }),
     expire: () => { session = 'retired'; for (const stream of streams) stream.end() },
     stream: () => { streaming = true },
+    logAfterSubscription: () => { logAfterSubscription = true },
     streamFailures: (id: string) => failedStreamGets.get(id) ?? 0,
     failInitialization: (status: number) => { initializationFailure = status },
     fail: (status: number) => { failure = status },
     toolError: () => { toolError = true },
     holdInit: () => (holdInit = deferred()),
     holdTool: () => (holdTool = deferred()),
+    holdSubscription: () => (holdSubscription = deferred()),
   }
 }
 
@@ -208,5 +226,64 @@ describe('expired legacy HTTP sessions', () => {
     expect(f.streamFailures('session-2')).toBe(1)
     await f.client.callTool('change-state')
     expect(f.counts()).toEqual({ initializes: 3, executions: 1 })
+  })
+
+  it('does not try to replace a caller-owned SDK transport', async () => {
+    const f = await fixture(false)
+    const transport = new StreamableHTTPClientTransport(new URL(f.url))
+    const client = await Client.connect(transport, { versionNegotiation: { mode: 'legacy' } })
+    try {
+      f.expire()
+      await expect(client.listTools()).rejects.toMatchObject({ status: 404 })
+      await expect(client.listTools()).rejects.toMatchObject({ status: 404 })
+      expect(f.counts()).toEqual({ initializes: 1, executions: 0 })
+    } finally { await client.close() }
+  })
+
+  it('releases every reference when concurrent initial connections fail', async () => {
+    const f = await fixture(false)
+    f.failInitialization(500)
+    const results = await Promise.allSettled([f.client.connect(), f.client.connect()])
+    expect(results.map(result => result.status)).toEqual(['rejected', 'rejected'])
+    expect(f.counts().initializes).toBe(1)
+    f.failInitialization(0)
+    await f.client.connect()
+    await f.client.close()
+    expect(f.client.isConnected()).toBe(false)
+  })
+
+  it('does not publish a replacement closed by a notification following a subscription response', async () => {
+    const f = await fixture(false)
+    let closed: Promise<void> | undefined
+    const client = await Client.connect(f.url, {
+      versionNegotiation: { mode: 'legacy' },
+      handlers: { log: () => { closed = client.close() } },
+    })
+    try {
+      await client.subscribeResource('test://resource', () => {})
+      f.expire()
+      await expect(client.listTools()).rejects.toMatchObject({ status: 404 })
+      f.logAfterSubscription()
+      await expect(client.callTool('change-state')).rejects.toThrow('Client closed while connecting')
+      expect(closed).toBeDefined()
+      await closed
+      expect(client.isConnected()).toBe(false)
+      expect(f.counts().executions).toBe(0)
+    } finally { await client.close() }
+  })
+
+  it('does not publish a replacement closed during resource subscription restoration', async () => {
+    const f = await fixture()
+    await f.client.subscribeResource('test://resource', () => {})
+    f.expire()
+    await expect(f.client.listTools()).rejects.toMatchObject({ status: 404 })
+    const hold = f.holdSubscription()
+    const request = f.client.callTool('change-state').catch(error => error)
+    await f.subscriptionStarted.promise
+    await f.client.close()
+    hold.resolve()
+    expect(await request).toBeInstanceOf(Error)
+    expect(f.client.isConnected()).toBe(false)
+    expect(f.counts().executions).toBe(0)
   })
 })
