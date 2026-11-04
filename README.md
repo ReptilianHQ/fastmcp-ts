@@ -6,6 +6,8 @@
 > The client also retires expired legacy HTTP sessions and initializes a fresh
 > connection for the next explicit request, without replaying failed operations.
 > Introspection outages return 503 while invalid credentials remain 401.
+> Availability errors retain the received upstream HTTP status as `upstreamStatus`
+> for internal diagnostics; public error bodies and retry behavior stay unchanged.
 > Distribution is GitHub-only; upstream remains the primary project.
 
 The TypeScript framework for building [Model Context Protocol](https://modelcontextprotocol.io) servers, clients, and apps. The official TypeScript counterpart to [FastMCP for Python](https://github.com/PrefectHQ/fastmcp) - built and maintained with 💙 by the same team at [Prefect](https://prefect.io).
@@ -17,7 +19,7 @@ FastMCP 1.0 speaks both MCP protocol generations: the 2025 legacy era and the 20
 ## Installation
 
 ```bash
-npm install @reptilianhq/fastmcp-ts@https://github.com/ReptilianHQ/fastmcp-ts/releases/download/v1.9.0-reptilian.0/reptilianhq-fastmcp-ts-1.9.0-reptilian.0.tgz
+npm install @reptilianhq/fastmcp-ts@https://github.com/ReptilianHQ/fastmcp-ts/releases/download/v1.9.0-reptilian.1/reptilianhq-fastmcp-ts-1.9.0-reptilian.1.tgz
 ```
 
 ---

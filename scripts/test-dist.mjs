@@ -23,6 +23,12 @@ if (missing.length) {
   process.exit(1)
 }
 
+const unavailable = new VerificationUnavailableError({ upstreamStatus: 429, retryAfter: '17' })
+if (unavailable.upstreamStatus !== 429 || unavailable.retryAfterSeconds !== 17
+  || unavailable.message !== 'Token verification is temporarily unavailable') {
+  throw new Error('Compiled availability error lost internal status or changed its public contract')
+}
+
 const { version: packageVersion } = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 )

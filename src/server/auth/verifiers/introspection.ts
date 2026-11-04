@@ -56,7 +56,7 @@ export function introspectionVerifier(options: IntrospectionVerifierOptions): To
           redirect: 'error',
         })
         if (!response.ok) {
-          throw new VerificationUnavailableError({ retryAfter: response.headers.get('retry-after') })
+          throw new VerificationUnavailableError({ retryAfter: response.headers.get('retry-after'), upstreamStatus: response.status })
         }
         const answer = await response.json()
         if (!answer || typeof answer !== 'object' || Array.isArray(answer)
@@ -71,7 +71,7 @@ export function introspectionVerifier(options: IntrospectionVerifierOptions): To
         data = answer
       } catch (cause) {
         if (cause instanceof VerificationUnavailableError) throw cause
-        throw new VerificationUnavailableError({ cause })
+        throw new VerificationUnavailableError({ cause, upstreamStatus: response?.status })
       } finally {
         await response?.body?.cancel().catch(() => {})
       }

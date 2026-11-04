@@ -56,6 +56,42 @@ function verifier(endpoint: string, extra = {}) {
 }
 
 describe('verification availability', () => {
+  it.each([304, 400, 401, 403, 429, 500, 502, 503, 504])('retains upstream HTTP %i only as internal numeric diagnostics', async status => {
+    const upstream = await fixture(res => res.writeHead(status, { 'Retry-After': '17' }).end('private provider body'))
+    const error = await verifier(upstream.endpoint).verify('fixture-token').catch(error => error)
+    expect(error).toBeInstanceOf(VerificationUnavailableError)
+    expect(error.upstreamStatus).toBe(status)
+    expect(error.message).toBe('Token verification is temporarily unavailable')
+    expect(error.retryAfterSeconds).toBe(17)
+    expect(error.cause).toBeUndefined()
+    expect(upstream.requests()).toBe(1)
+  })
+
+  it.each(['private malformed JSON', '{"active":"private invalid schema"}'])('retains a received HTTP200 when its body cannot establish identity', async body => {
+    const upstream = await fixture(res => res.end(body))
+    const error = await verifier(upstream.endpoint).verify('fixture-token').catch(error => error)
+    expect(error).toBeInstanceOf(VerificationUnavailableError)
+    expect(error.upstreamStatus).toBe(200)
+    expect(error.cause).toBeInstanceOf(Error)
+    expect(upstream.requests()).toBe(1)
+  })
+
+  it('does not invent a status when the fetch fails before receiving a response', async () => {
+    const cause = new TypeError('private network details')
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(cause)
+    const error = await verifier('http://127.0.0.1:1').verify('fixture-token').catch(error => error)
+    expect(error).toBeInstanceOf(VerificationUnavailableError)
+    expect(error.upstreamStatus).toBeUndefined()
+    expect(error.cause).toBe(cause)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([undefined, NaN, Infinity, -1, 0, 99, 600, 429.5, '429', 'private provider body'])('ignores invalid diagnostic status %j', upstreamStatus => {
+    const error = new VerificationUnavailableError({ upstreamStatus: upstreamStatus as number })
+    expect(error.upstreamStatus).toBeUndefined()
+    expect(error.message).toBe('Token verification is temporarily unavailable')
+  })
+
   it.each([429, 503, 500, 502, 504, 401, 403, 400])('an upstream %i is not a caller credential verdict', async status => {
     const upstream = await fixture(res => res.writeHead(status, { 'Retry-After': '17' }).end('private upstream detail'))
     const { url, executed } = await serve(verifier(upstream.endpoint))
@@ -70,7 +106,7 @@ describe('verification availability', () => {
   })
 
   it.each(['token', 'request'] as const)('both protocol eras preserve the typed %s verifier failure', async kind => {
-    const fail = async () => { throw new VerificationUnavailableError({ cause: new Error('private secret'), retryAfter: '9' }) }
+    const fail = async () => { throw new VerificationUnavailableError({ cause: new Error('private secret'), retryAfter: '9', upstreamStatus: 429 }) }
     const auth = kind === 'token' ? { verify: fail } : { verifyRequest: fail }
     const { url, executed } = await serve(auth)
     for (const version of ['2025-06-18', '2026-07-28']) {
