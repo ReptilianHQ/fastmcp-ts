@@ -2,7 +2,7 @@
 title: "RequestVerifier"
 ---
 
-Defined in: [server/auth/types.ts:45](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L45)
+Defined in: [server/auth/types.ts:45](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L45)
 
 Request-level verifier for HTTP deployments where identity does not arrive
 as a bearer token. The typical case is a trusted reverse proxy that
@@ -16,8 +16,8 @@ admit the request. The result becomes `ctx.auth`, feeds per-item `auth`
 checks and list filtering, and its `token` (hashed) keys response-cache
 partitioning. `token` MUST therefore be a stable, non-empty, per-identity
 value, such as the verified user id. The server rejects an empty `token`
-with HTTP 500. Throw `AuthorizationError` to produce 403; any other throw
-produces 401.
+with HTTP 500. Throw `AuthorizationError` to produce 403 or
+`VerificationUnavailableError` to produce 503; other errors produce 401.
 
 SECURITY: request headers are forgeable by anyone who can reach this server
 directly. Trust them only after verifying provenance: a shared secret the
@@ -36,7 +36,7 @@ TokenVerifier if you need `FASTMCP_CLI_AUTH_TOKEN` support.
 verifyRequest(request): Promise<AccessToken>;
 ```
 
-Defined in: [server/auth/types.ts:46](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L46)
+Defined in: [server/auth/types.ts:46](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L46)
 
 #### Parameters
 

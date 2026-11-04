@@ -2,10 +2,10 @@
 title: "AuthorizationError"
 ---
 
-Defined in: [server/auth/types.ts:60](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L60)
+Defined in: [server/auth/types.ts:60](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L60)
 
 Thrown by authorization checks to produce a 403 response.
-Any other error thrown during verification produces a 401.
+Other verification errors produce 401, except `VerificationUnavailableError`.
 
 ## Extends
 
@@ -19,7 +19,7 @@ Any other error thrown during verification produces a 401.
 new AuthorizationError(message): AuthorizationError;
 ```
 
-Defined in: [server/auth/types.ts:61](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L61)
+Defined in: [server/auth/types.ts:61](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L61)
 
 #### Parameters
 

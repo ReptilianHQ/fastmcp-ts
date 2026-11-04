@@ -6,7 +6,6 @@ export type {
   ToolConfig,
   ToolAnnotations,
   OAuthConfig,
-  ProtectedResourceConfig,
 } from './FastMCP'
 export type { CustomRouteConfig, CustomRouteHandler, HealthOptions } from './customRoutes'
 export type { CorsOptions } from './cors'
@@ -65,12 +64,14 @@ export {
 } from './transform'
 export type { AccessToken, TokenVerifier } from './auth/types'
 export type { RequestVerifier } from './auth/types'
-export { AuthorizationError } from './auth/types'
+export { AuthorizationError, VerificationUnavailableError } from './auth/types'
 export type { HttpRequestContext } from './httpContext'
 export { forwardableHeaders } from './httpContext'
 export type { AuthCheck } from './auth/authorization'
 export { requireScopes } from './auth/authorization'
 export { multiAuth } from './auth/multiAuth'
+export { remoteAuth } from './auth/remote'
+export type { RemoteAuthOptions, RemoteAuthProvider, ProtectedResourceConfig } from './auth/remote'
 export { jwtVerifier } from './auth/verifiers/jwt'
 export { introspectionVerifier } from './auth/verifiers/introspection'
 export { staticTokenVerifier, debugTokenVerifier } from './auth/verifiers/static'

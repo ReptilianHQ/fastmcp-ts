@@ -1,7 +1,14 @@
-FastMCP TypeScript RC Repack
+FastMCP TypeScript ReptilianHQ repack
 
 This product includes software developed by PrefectHQ and FastMCP contributors:
 https://github.com/PrefectHQ/fastmcp-ts
 
-This ReptilianHQ package republishes upstream commit
-f765dbddbab8e7cf110c29086b300e2bc9c81af4 without runtime source changes.
+Based on upstream FastMCP 1.9.0, commit
+b8d1e365b3352fb868e6b6b2678a5f5fe4e850a8.
+
+ReptilianHQ modifications include inherited-key rejection in static token
+verification, HTTP session recovery without replaying failed operations,
+and verification-availability response handling.
+
+Sources and modifications:
+https://github.com/ReptilianHQ/fastmcp-ts

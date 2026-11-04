@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.9.0-reptilian.0
+
+- Refresh to upstream 1.9.0 and use its external-auth metadata contract.
+- Preserve verification-failure, static-token and expired-session protections.
+
 ## 1.7.3-reptilian.2
 
 - Recover expired HTTP sessions without replaying failed operations or losing in-flight results.
@@ -119,6 +124,44 @@
 - f74ddff: Fix: a modern stdio server no longer advertises `resources.subscribe`.
 
   A server on stdio in the modern era advertised the `resources.subscribe` capability by mistake. The modern era carries resource change signals over the `subscriptions/listen` stream, not over `resources/subscribe`, so the advertisement was wrong. The server now reports the correct capabilities for the negotiated era. A modern client no longer sees a subscribe capability that the modern era does not use.
+
+## 1.9.0
+
+### Minor Changes
+
+- a17dfbd: Add client support for the MCP Skills extension (SEP-2640). Opt in by adding `SKILLS_EXTENSION_ID` to `capabilities.extensions`, then call `listSkills()`, `getSkill(uri)`, and `readSkill(uri)` on a modern (2026-07-28) connection. `readSkill()` checks every file against the skill's entry. `supportsSkills()` reports whether the connection can use the extension. Built on the SDK's `SkillsClient`.
+
+### Patch Changes
+
+- b66f82c: Bump dependencies. The published CLI inlines its dependency tree, so it now ships `@modelcontextprotocol/node` 2.0.0 -> 2.1.0 (#134), qs 6.16.0 -> 6.17.0 (#135), body-parser 2.3.0 -> 2.4.0 (#137), zod 4.3.6 -> 4.6.7 (#138), and ip-address 10.7.2 -> 10.7.5 (#139).
+
+  Also bumps undici 7.30.0 -> 7.30.1 (#136). It is dev-only and does not affect the published package.
+- a317917: Bump the MCP SDK packages (`client`, `core`, `server`, `server-legacy`) from 2.3.1 to 2.4.0.
+
+## 1.8.1
+
+### Patch Changes
+
+- 79fdac9: Security update: require `@modelcontextprotocol/server`, `@modelcontextprotocol/server-legacy`, and `@modelcontextprotocol/client` 2.3.1 or later. The previous range (`^2.0.0`) allowed versions with these advisories:
+
+  - GHSA-jm63-cq47-j5jp (high, server): shared transport or server instances delivered one HTTP client's messages to another.
+  - GHSA-46jr-4wx8-v453 (high, server): one HTTP request within the default size limit could exhaust server memory during validation.
+  - GHSA-rvq5-wwqv-78pq (medium, server and server-legacy): server bearer authentication accepted tokens issued for another service.
+  - GHSA-6prh-2h8m-c8cw (medium, client): HTTP client transports and OAuth requests followed cross-origin redirects and re-sent custom headers and request bodies.
+
+  The published CLI inlines its dependency tree, so it now ships the patched SDK: server and server-legacy 2.0.0 -> 2.3.1 (#126, #128), client 2.2.0 -> 2.3.1.
+
+  Also bumps launch-editor 2.14.1 -> 2.14.2 (#124), vite 8.3.0 -> 8.3.4 (#125), and markdown-it 14.3.2 -> 14.3.3 (#127) for security fixes. These are dev-only and do not affect the published package.
+
+## 1.8.0
+
+### Minor Changes
+
+- e2cb1d1: Servers that verify tokens from an external authorization server can now publish RFC 9728 protected resource metadata (#114). Wrap a token or request verifier with `remoteAuth({ verifier, authorizationServers, baseUrl })` and pass it to `auth`: the HTTP server serves the document at the path-scoped well-known URL (`/.well-known/oauth-protected-resource/mcp` for `/mcp`) and every 401 challenge names it in `resource_metadata`. The built-in `oauth` mode now serves its protected resource metadata at the same path-scoped URL and names it in its 401 challenges. The root URL `/.well-known/oauth-protected-resource` no longer serves it. `oauthProvider()` now answers an unknown or expired token with 401 `invalid_token` instead of 500.
+
+### Patch Changes
+
+- d5cb7a5: Fix MCP Apps on the stateless 2025-era HTTP path (#113). `fetch()` and `run({ transport: 'http', stateless: true })` serve each request on a fresh server instance, so only `initialize` sees the client's capabilities. FastMCP treated every later request as coming from a client without UI support: it removed `_meta.ui` from `tools/list`, `resources/list` and `resources/read`, and replaced UI tool results with a placeholder. When the client's capabilities are unknown, FastMCP now serves the UI metadata and the real tool result. Clients known to lack UI support still get no UI metadata. For those clients a UI tool now keeps its text `content` and drops only `structuredContent`, instead of returning `[UI not available in this client]`. A UI tool that declares an output schema keeps its `structuredContent`.
 
 ## 1.7.3
 

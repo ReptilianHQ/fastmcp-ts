@@ -1,8 +1,7 @@
 {
   "name": "@reptilianhq/fastmcp-ts",
-  "version": "1.7.3-reptilian.2",
-  "private": true,
-  "description": "Public ReptilianHQ repack of upstream FastMCP TypeScript 1.7.3 with static-token hardening",
+  "version": "1.9.0-reptilian.0",
+  "description": "ReptilianHQ repack of upstream FastMCP TypeScript 1.9.0 with authentication hardening and session recovery",
   "type": "module",
   "exports": {
     "./server": {
@@ -45,7 +44,6 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE",
     "NOTICE"
   ],
   "engines": {
@@ -53,7 +51,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "prepublishOnly": "npm run build && node scripts/test-dist.mjs && npm run test:browser-bundle",
+    "prepublishOnly": "npm run build && node scripts/test-dist.mjs && npm run test:browser-bundle && node scripts/test-pack.mjs",
     "test": "vitest run",
     "test:browser-bundle": "node scripts/test-browser-bundle.mjs",
     "test:e2e": "playwright test",
@@ -64,10 +62,14 @@
     "conformance:client": "node tests/conformance/run-client.mjs",
     "docs:dev": "cd docs && npx --yes mint@latest dev",
     "docs:api": "typedoc && node scripts/generate-api-nav.mjs",
-    "docs:links": "cd docs && npx --yes mint@latest broken-links"
+    "docs:links": "cd docs && npx --yes mint@latest broken-links",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
+    "@changesets/cli": "^3.0.0",
     "@google/genai": "^1.50.1",
     "@playwright/test": "^1.61.1",
     "@types/node": "^22.0.0",
@@ -127,11 +129,11 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.2.0",
-    "@modelcontextprotocol/client": "^2.0.0",
-    "@modelcontextprotocol/core": "^2.0.0",
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@modelcontextprotocol/core": "^2.4.0",
     "@modelcontextprotocol/node": "^2.0.0",
-    "@modelcontextprotocol/server": "^2.0.0",
-    "@modelcontextprotocol/server-legacy": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "@modelcontextprotocol/server-legacy": "^2.4.0",
     "@standard-schema/spec": "^1.1.0",
     "@types/express": "^5.0.6",
     "chalk": "^5.6.2",
@@ -144,5 +146,6 @@
     "listr2": "^10.2.1",
     "url-template": "^3.1.1",
     "yaml": "^2.8.3"
-  }
+  },
+  "private": true
 }

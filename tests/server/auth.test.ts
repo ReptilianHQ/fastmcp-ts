@@ -19,6 +19,9 @@ import {
   CachingMiddleware,
 } from 'fastmcp-ts/server'
 import type { AccessToken, RequestVerifier } from 'fastmcp-ts/server'
+import type { OAuthClientInformationFull } from '@modelcontextprotocol/server'
+import { InvalidTokenError } from '@modelcontextprotocol/server-legacy/auth'
+import type { Response as ExpressResponse } from 'express'
 import { connectHttpClient, connectHttpClientWithHeaders, rawPost } from '../helpers/http'
 import { connectEra, ERA_COMBOS } from '../helpers/eras'
 
@@ -262,208 +265,6 @@ describe('Server — Authentication', () => {
       expect(res.status).toBe(401)
       expect(res.headers.get('www-authenticate')).toBe('Bearer realm="mcp"')
     })
-
-    it('advertises path-correct RFC 9728 metadata for an external authorization server', async () => {
-      const resourceUrl = new URL('https://mcp.example.com/mcp')
-      const mcp = new FastMCP({
-        name: 'test-server',
-        auth: staticTokenVerifier({ tok: { scopes: ['mcp:read'] } }),
-        protectedResource: {
-          resourceUrl,
-          authorizationServers: [new URL('https://auth.example.com')],
-          scopes: ['mcp:read'],
-          resourceName: 'Example MCP',
-          serviceDocumentationUrl: new URL('https://docs.example.com/mcp'),
-        },
-      })
-      const { url } = await startServer(mcp)
-      cleanup.push(() => mcp.close())
-
-      const metadataUrl = new URL('/.well-known/oauth-protected-resource/mcp', url)
-      const metadataRes = await fetch(metadataUrl)
-      expect(metadataRes.status).toBe(200)
-      expect(metadataRes.headers.get('access-control-allow-origin')).toBe('*')
-      expect(await metadataRes.json()).toEqual({
-        resource: resourceUrl.href,
-        authorization_servers: ['https://auth.example.com/'],
-        scopes_supported: ['mcp:read'],
-        resource_name: 'Example MCP',
-        resource_documentation: 'https://docs.example.com/mcp',
-      })
-
-      const missing = await fetch(url, { method: 'POST' })
-      expect(missing.status).toBe(401)
-      expect(missing.headers.get('www-authenticate')).toBe(
-        'Bearer realm="mcp", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"',
-      )
-
-      const invalid = await rawPost(url, 'bad-token')
-      expect(invalid.status).toBe(401)
-      expect(invalid.headers.get('www-authenticate')).toBe(
-        'Bearer realm="mcp", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"',
-      )
-    })
-
-    it('serves discovery only at the exact path and query with RFC method semantics', async () => {
-      const mcp = new FastMCP({
-        name: 'test-server',
-        auth: staticTokenVerifier({ tok: { scopes: [] } }),
-        protectedResource: {
-          resourceUrl: new URL('https://mcp.example.com/mcp?tenant=example'),
-          authorizationServers: [new URL('https://auth.example.com')],
-          scopes: [],
-        },
-      })
-      const { url } = await startServer(mcp)
-      cleanup.push(() => mcp.close())
-
-      const metadataUrl = new URL('/.well-known/oauth-protected-resource/mcp?tenant=example', url)
-      const get = await fetch(metadataUrl)
-      expect(get.status).toBe(200)
-      expect(await get.json()).toEqual({
-        resource: 'https://mcp.example.com/mcp?tenant=example',
-        authorization_servers: ['https://auth.example.com/'],
-      })
-
-      const head = await fetch(metadataUrl, { method: 'HEAD' })
-      expect(head.status).toBe(200)
-      expect(await head.text()).toBe('')
-
-      const options = await fetch(metadataUrl, {
-        method: 'OPTIONS',
-        headers: { 'Access-Control-Request-Headers': 'authorization' },
-      })
-      expect(options.status).toBe(204)
-      expect(options.headers.get('allow')).toBeNull()
-      expect(options.headers.get('access-control-allow-methods')).toBe('GET, HEAD, OPTIONS')
-      expect(options.headers.get('access-control-allow-headers')).toBe('authorization')
-
-      const post = await fetch(metadataUrl, { method: 'POST' })
-      expect(post.status).toBe(405)
-      expect(post.headers.get('allow')).toBe('GET, HEAD, OPTIONS')
-
-      expect((await fetch(new URL('/.well-known/oauth-protected-resource/mcp', url))).status).toBe(404)
-      expect((await fetch(new URL('/.well-known/oauth-protected-resource/mcp?tenant=other', url))).status).toBe(404)
-    })
-
-    it('validates protected-resource URLs and OAuth scope tokens', () => {
-      const auth = staticTokenVerifier({ tok: { scopes: [] } })
-      const base = {
-        name: 'test-server',
-        auth,
-        protectedResource: {
-          resourceUrl: new URL('https://mcp.example.com/mcp'),
-          authorizationServers: [new URL('https://auth.example.com')],
-        },
-      }
-
-      expect(
-        () => new FastMCP({
-          ...base,
-          protectedResource: { ...base.protectedResource, resourceUrl: new URL('http://public.example/mcp') },
-        }),
-      ).toThrow('protectedResource.resourceUrl must use HTTPS outside localhost')
-      expect(
-        () => new FastMCP({
-          ...base,
-          protectedResource: {
-            ...base.protectedResource,
-            authorizationServers: [new URL('https://auth.example.com?tenant=example')],
-          },
-        }),
-      ).toThrow('protectedResource.authorizationServers[0] must not contain a query string')
-      expect(
-        () => new FastMCP({
-          ...base,
-          protectedResource: {
-            ...base.protectedResource,
-            authorizationServers: [new URL('https://auth.example.com/#fragment')],
-          },
-        }),
-      ).toThrow('protectedResource.authorizationServers[0] must not contain a fragment')
-      expect(
-        () => new FastMCP({
-          ...base,
-          protectedResource: { ...base.protectedResource, scopes: ['mcp:read', 'not valid'] },
-        }),
-      ).toThrow('protectedResource.scopes[1] must be a valid OAuth scope token')
-    })
-
-    it('rejects an invalid OAuth resource URL before opening a listener', async () => {
-      const mcp = new FastMCP({
-        name: 'test-server',
-        oauth: {
-          provider: oauthProvider(),
-          resourceUrl: new URL('http://public.example/mcp'),
-        },
-      })
-
-      await expect(
-        mcp.run({ transport: 'http', port: 0, host: '127.0.0.1' }),
-      ).rejects.toThrow('oauth.resourceUrl must use HTTPS outside localhost')
-      expect(mcp.address).toBeNull()
-      await expect(mcp.close()).resolves.toBeUndefined()
-
-      const invalidScopes = new FastMCP({
-        name: 'test-server',
-        oauth: {
-          provider: oauthProvider(),
-          scopes: ['mcp:read', 'not valid'],
-        },
-      })
-      await expect(
-        invalidScopes.run({ transport: 'http', port: 0, host: '127.0.0.1' }),
-      ).rejects.toThrow('oauth.scopes[1] must be a valid OAuth scope token')
-      expect(invalidScopes.address).toBeNull()
-      await expect(invalidScopes.close()).resolves.toBeUndefined()
-
-      for (const scopes of ['', null]) {
-        const malformedScopes = new FastMCP({
-          name: 'test-server',
-          oauth: {
-            provider: oauthProvider(),
-            scopes: scopes as unknown as string[],
-          },
-        })
-        await expect(
-          malformedScopes.run({ transport: 'http', port: 0, host: '127.0.0.1' }),
-        ).rejects.toThrow('oauth.scopes must be an array of OAuth scope tokens')
-        expect(malformedScopes.address).toBeNull()
-        await expect(malformedScopes.close()).resolves.toBeUndefined()
-      }
-
-      const queryResource = new FastMCP({
-        name: 'test-server',
-        oauth: {
-          provider: oauthProvider(),
-          resourceUrl: new URL('https://mcp.example.com/mcp?tenant=example'),
-        },
-      })
-      await expect(
-        queryResource.run({ transport: 'http', port: 0, host: '127.0.0.1' }),
-      ).rejects.toThrow('oauth.resourceUrl must not contain a query string')
-      expect(queryResource.address).toBeNull()
-      await expect(queryResource.close()).resolves.toBeUndefined()
-    })
-
-    it('rejects protected-resource discovery without a verifier or with a local OAuth server', () => {
-      const protectedResource = {
-        resourceUrl: new URL('https://mcp.example.com/mcp'),
-        authorizationServers: [new URL('https://auth.example.com')],
-      }
-
-      expect(() => new FastMCP({ name: 'test-server', protectedResource })).toThrow(
-        'protectedResource requires auth',
-      )
-      expect(
-        () => new FastMCP({
-          name: 'test-server',
-          auth: staticTokenVerifier({ tok: { scopes: [] } }),
-          oauth: { provider: oauthProvider() },
-          protectedResource,
-        }),
-      ).toThrow('protectedResource cannot be combined with oauth')
-    })
   })
 
   describe('opaque token introspection', () => {
@@ -549,28 +350,59 @@ describe('Server — Authentication', () => {
       cleanup.length = 0
     })
 
-    it('advertises the configured MCP path and challenges with its metadata URL', async () => {
-      const provider = oauthProvider()
-      const mcp = new FastMCP({
-        name: 'test-server',
-        oauth: { provider, issuerUrl: new URL('https://mcp.example.com') },
-      })
-      await mcp.run({ transport: 'http', port: 0, host: '127.0.0.1', path: '/mcp' })
+    it('answers an unknown bearer token with 401 invalid_token, not 500', async () => {
+      const mcp = new FastMCP({ name: 'test-server', oauth: { provider: oauthProvider() } })
+      await mcp.run({ transport: 'http', port: 0, host: '127.0.0.1' })
       cleanup.push(() => mcp.close())
+      const res = await rawPost(new URL(`http://127.0.0.1:${mcp.address!.port}${mcp.address!.path}`), 'nope')
+      expect(res.status).toBe(401)
+      expect(res.headers.get('www-authenticate')).toContain('error="invalid_token"')
+      expect(await res.json()).toMatchObject({ error: 'invalid_token' })
+    })
 
-      const baseUrl = `http://127.0.0.1:${mcp.address!.port}`
-      const metadataRes = await fetch(`${baseUrl}/.well-known/oauth-protected-resource/mcp`)
-      expect(metadataRes.status).toBe(200)
-      expect(await metadataRes.json()).toMatchObject({
-        resource: 'https://mcp.example.com/mcp',
-        authorization_servers: ['https://mcp.example.com/'],
+    it('serves protected resource metadata at the path-scoped URL for /mcp', async () => {
+      const mcp = new FastMCP({ name: 'test-server', oauth: { provider: oauthProvider(), scopes: ['read'] } })
+      await mcp.run({ transport: 'http', port: 0, host: '127.0.0.1' })
+      cleanup.push(() => mcp.close())
+      const base = `http://127.0.0.1:${mcp.address!.port}`
+      const res = await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({
+        resource: `${base}/mcp`,
+        authorization_servers: [`${base}/`],
+        scopes_supported: ['read'],
       })
+      expect((await fetch(`${base}/.well-known/oauth-protected-resource`)).status).toBe(404)
+      expect((await fetch(`${base}/.well-known/oauth-authorization-server`)).status).toBe(200)
+    })
 
-      const challengeRes = await fetch(`${baseUrl}/mcp`, { method: 'POST' })
-      expect(challengeRes.status).toBe(401)
-      expect(challengeRes.headers.get('www-authenticate')).toContain(
-        'resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"',
+    it('401 challenges carry resource_metadata', async () => {
+      const mcp = new FastMCP({ name: 'test-server', oauth: { provider: oauthProvider() } })
+      await mcp.run({ transport: 'http', port: 0, host: '127.0.0.1' })
+      cleanup.push(() => mcp.close())
+      const base = `http://127.0.0.1:${mcp.address!.port}`
+      const mcpUrl = new URL(`${base}${mcp.address!.path}`)
+      for (const token of [undefined, 'nope']) {
+        const res = await rawPost(mcpUrl, token)
+        expect(res.status).toBe(401)
+        expect(res.headers.get('www-authenticate')).toContain(
+          `resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`,
+        )
+      }
+    })
+
+    it('verifyAccessToken rejects an expired token with InvalidTokenError', async () => {
+      const provider = oauthProvider({ tokenTtl: -1 })
+      const client = { client_id: 'c', redirect_uris: ['http://localhost/cb'] } as OAuthClientInformationFull
+      let location = ''
+      await provider.authorize(
+        client,
+        { redirectUri: 'http://localhost/cb', codeChallenge: 'x', scopes: [] },
+        { redirect: (u: string) => { location = u } } as unknown as ExpressResponse,
       )
+      const code = new URL(location).searchParams.get('code')!
+      const { access_token } = await provider.exchangeAuthorizationCode(client, code)
+      await expect(provider.verifyAccessToken(access_token)).rejects.toBeInstanceOf(InvalidTokenError)
     })
 
     it('a client without credentials can register dynamically and obtain tokens', async () => {

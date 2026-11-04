@@ -246,6 +246,12 @@
             "kind": 256,
             "path": "client/interfaces/SamplingAdapterOptions.mdx",
             "isDeprecated": false
+          },
+          {
+            "title": "SkillContents",
+            "kind": 256,
+            "path": "client/interfaces/SkillContents.mdx",
+            "isDeprecated": false
           }
         ]
       },
@@ -583,6 +589,12 @@
             "isDeprecated": false
           },
           {
+            "title": "VerificationUnavailableError",
+            "kind": 128,
+            "path": "server/classes/VerificationUnavailableError.mdx",
+            "isDeprecated": false
+          },
+          {
             "title": "VersionFilter",
             "kind": 128,
             "path": "server/classes/VersionFilter.mdx",
@@ -840,6 +852,12 @@
             "isDeprecated": false
           },
           {
+            "title": "RemoteAuthOptions",
+            "kind": 256,
+            "path": "server/interfaces/RemoteAuthOptions.mdx",
+            "isDeprecated": false
+          },
+          {
             "title": "RequestBodyInfo",
             "kind": 256,
             "path": "server/interfaces/RequestBodyInfo.mdx",
@@ -1049,6 +1067,12 @@
             "isDeprecated": false
           },
           {
+            "title": "RemoteAuthProvider",
+            "kind": 2097152,
+            "path": "server/type-aliases/RemoteAuthProvider.mdx",
+            "isDeprecated": false
+          },
+          {
             "title": "RouteMapFn",
             "kind": 2097152,
             "path": "server/type-aliases/RouteMapFn.mdx",
@@ -1195,6 +1219,12 @@
             "title": "redescribeTool",
             "kind": 64,
             "path": "server/functions/redescribeTool.mdx",
+            "isDeprecated": false
+          },
+          {
+            "title": "remoteAuth",
+            "kind": 64,
+            "path": "server/functions/remoteAuth.mdx",
             "isDeprecated": false
           },
           {

@@ -9,13 +9,13 @@
  */
 
 import { Client, MultiServerClient, BearerAuth, OAuth, StdioTransport } from '../dist/client.js'
-import { FastMCP, createProxy, createOpenAPIServer, forwardableHeaders } from '../dist/server.js'
+import { FastMCP, createProxy, createOpenAPIServer, forwardableHeaders, VerificationUnavailableError } from '../dist/server.js'
 import { InMemoryTransport } from '@modelcontextprotocol/client'
 import { Server } from '@modelcontextprotocol/server'
 import { readFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
 
-const required = { Client, MultiServerClient, BearerAuth, OAuth, StdioTransport, FastMCP, createProxy, createOpenAPIServer, forwardableHeaders }
+const required = { Client, MultiServerClient, BearerAuth, OAuth, StdioTransport, FastMCP, createProxy, createOpenAPIServer, forwardableHeaders, VerificationUnavailableError }
 const missing = Object.entries(required).filter(([, v]) => v === undefined).map(([k]) => k)
 
 if (missing.length) {
