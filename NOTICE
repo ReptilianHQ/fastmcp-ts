@@ -8,7 +8,7 @@ b8d1e365b3352fb868e6b6b2678a5f5fe4e850a8.
 
 ReptilianHQ modifications include inherited-key rejection in static token
 verification, HTTP session recovery without replaying failed operations,
-and verification-availability response handling.
+and verification-availability response handling with internal numeric status diagnostics.
 
 Sources and modifications:
 https://github.com/ReptilianHQ/fastmcp-ts

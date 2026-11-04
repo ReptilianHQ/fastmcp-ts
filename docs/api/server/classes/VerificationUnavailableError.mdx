@@ -20,7 +20,7 @@ The public message is fixed; diagnostic details belong in `cause`.
 new VerificationUnavailableError(options?): VerificationUnavailableError;
 ```
 
-Defined in: [server/auth/types.ts:76](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L76)
+Defined in: [server/auth/types.ts:78](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L78)
 
 #### Parameters
 
@@ -33,6 +33,10 @@ Defined in: [server/auth/types.ts:76](https://github.com/ReptilianHQ/fastmcp-ts/
 ###### retryAfter?
 
 `string` \| `null`
+
+###### upstreamStatus?
+
+`number`
 
 #### Returns
 
@@ -55,3 +59,15 @@ readonly optional retryAfterSeconds?: number;
 Defined in: [server/auth/types.ts:74](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L74)
 
 Retry delay in seconds, limited to five minutes.
+
+***
+
+### upstreamStatus?
+
+```ts
+readonly optional upstreamStatus?: number;
+```
+
+Defined in: [server/auth/types.ts:76](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/types.ts#L76)
+
+Introspection HTTP status, when a response was received. Never included in the public HTTP error.

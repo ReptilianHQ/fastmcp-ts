@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.9.0-reptilian.1
+
+- Retain numeric introspection response status for internal availability diagnostics without changing public errors.
+
 ## 1.9.0-reptilian.0
 
 - Refresh to upstream 1.9.0 and use its external-auth metadata contract.

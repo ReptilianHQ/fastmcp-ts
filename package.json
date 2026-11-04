@@ -1,6 +1,6 @@
 {
   "name": "@reptilianhq/fastmcp-ts",
-  "version": "1.9.0-reptilian.0",
+  "version": "1.9.0-reptilian.1",
   "description": "ReptilianHQ repack of upstream FastMCP TypeScript 1.9.0 with authentication hardening and session recovery",
   "type": "module",
   "exports": {

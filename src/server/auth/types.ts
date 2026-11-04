@@ -72,10 +72,15 @@ export class AuthorizationError extends Error {
 export class VerificationUnavailableError extends Error {
   /** Retry delay in seconds, limited to five minutes. */
   readonly retryAfterSeconds?: number
+  /** Introspection HTTP status, when a response was received. Never included in the public HTTP error. */
+  readonly upstreamStatus?: number
 
-  constructor(options: { cause?: unknown; retryAfter?: string | null } = {}) {
+  constructor(options: { cause?: unknown; retryAfter?: string | null; upstreamStatus?: number } = {}) {
     super('Token verification is temporarily unavailable', { cause: options.cause })
     this.name = 'VerificationUnavailableError'
+    if (Number.isInteger(options.upstreamStatus) && options.upstreamStatus! >= 100 && options.upstreamStatus! <= 599) {
+      this.upstreamStatus = options.upstreamStatus
+    }
     const value = options.retryAfter?.trim()
     if (!value) return
     let seconds: number
