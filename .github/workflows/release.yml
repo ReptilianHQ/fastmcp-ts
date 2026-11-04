@@ -31,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -51,6 +53,9 @@ jobs:
             if (process.env.EXPECTED_TAG !== `v${packageJson.version}`) throw new Error(`tag ${process.env.EXPECTED_TAG} does not match v${packageJson.version}`);
             if (packageJson.repository?.url !== "git+https://github.com/ReptilianHQ/fastmcp-ts.git") throw new Error("repository provenance mismatch");
           '
+
+      - name: Verify declared upstream ancestry
+        run: node scripts/check-upstream-base.mjs
 
       - name: Install dependencies
         run: npm ci
