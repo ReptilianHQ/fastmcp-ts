@@ -550,6 +550,7 @@ export class Client implements IClient {
     options?: RequestOptions,
   ): Promise<void> {
     await this._recoverSession()
+    const previousHandler = this._resourceSubscriptions.get(uri)
     this._resourceSubscriptions.set(uri, handler)
     if (this._sdk().getProtocolEra() === 'modern') {
       await this._refreshResourceListenSubscription()
@@ -568,18 +569,28 @@ export class Client implements IClient {
         )
       }
     } else {
-      await this._reauthRetry(() =>
-        this._sdk().subscribeResource(
-          { uri, ...this._metaParams() },
-          this._toSdkOptions(options, undefined, this._defaultOptions.resource?.timeout),
-        ),
-      )
+      try {
+        await this._reauthRetry(() =>
+          this._sdk().subscribeResource(
+            { uri, ...this._metaParams() },
+            this._toSdkOptions(options, undefined, this._defaultOptions.resource?.timeout),
+          ),
+        )
+      } catch (error) {
+        if (this._resourceSubscriptions.get(uri) === handler) {
+          if (previousHandler) this._resourceSubscriptions.set(uri, previousHandler)
+          else this._resourceSubscriptions.delete(uri)
+        }
+        throw error
+      }
     }
   }
 
   async unsubscribeResource(uri: string, options?: RequestOptions): Promise<void> {
-    await this._recoverSession()
+    // Remove local intent before reconnecting: a resource that disappeared on
+    // the server must not prevent callers from removing its failed restoration.
     this._resourceSubscriptions.delete(uri)
+    await this._recoverSession()
     if (this._sdk().getProtocolEra() === 'modern') {
       await this._refreshResourceListenSubscription()
     } else {

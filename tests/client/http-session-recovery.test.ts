@@ -23,6 +23,7 @@ async function fixture(connect = true) {
   let initializationFailure = 0
   let streaming = false
   let logAfterSubscription = false
+  const rejectedSubscriptions = new Set<string>()
   const failedStreamGets = new Map<string, number>()
   const streams = new Set<ServerResponse>()
   let holdInit: ReturnType<typeof deferred> | undefined
@@ -83,6 +84,10 @@ async function fixture(connect = true) {
     }
     if (message.method === 'resources/subscribe') {
       subscriptions.push(message.params.uri)
+      if (rejectedSubscriptions.has(message.params.uri)) {
+        reply(res, 200, { jsonrpc: '2.0', id: message.id, error: { code: -32602, message: 'Resource not found' } })
+        return
+      }
       if (holdSubscription) { subscriptionStarted.resolve(); await holdSubscription.promise }
       if (logAfterSubscription) {
         reply(res, 200, [
@@ -110,6 +115,7 @@ async function fixture(connect = true) {
     expire: () => { session = 'retired'; for (const stream of streams) stream.end() },
     stream: () => { streaming = true },
     logAfterSubscription: () => { logAfterSubscription = true },
+    rejectSubscription: (uri: string) => { rejectedSubscriptions.add(uri) },
     streamFailures: (id: string) => failedStreamGets.get(id) ?? 0,
     failInitialization: (status: number) => { initializationFailure = status },
     fail: (status: number) => { failure = status },
@@ -225,6 +231,32 @@ describe('expired legacy HTTP sessions', () => {
     await new Promise(resolve => setTimeout(resolve, 1200))
     expect(f.streamFailures('session-2')).toBe(1)
     await f.client.callTool('change-state')
+    expect(f.counts()).toEqual({ initializes: 3, executions: 1 })
+  })
+
+  it('does not restore a subscription the server rejected', async () => {
+    const f = await fixture()
+    f.rejectSubscription('test://missing')
+    await expect(f.client.subscribeResource('test://missing', () => {})).rejects.toThrow('Resource not found')
+    f.expire()
+    await expect(f.client.listTools()).rejects.toMatchObject({ status: 404 })
+    await expect(f.client.callTool('change-state')).resolves.toBeDefined()
+    expect(f.subscriptions).toEqual(['test://missing'])
+    expect(f.counts()).toEqual({ initializes: 2, executions: 1 })
+  })
+
+  it('can remove a vanished resource after its restoration fails', async () => {
+    const f = await fixture()
+    await f.client.subscribeResource('test://removed', () => {})
+    await f.client.subscribeResource('test://retained', () => {})
+    f.rejectSubscription('test://removed')
+    f.expire()
+    await expect(f.client.listTools()).rejects.toMatchObject({ status: 404 })
+    await expect(f.client.callTool('change-state')).rejects.toThrow('Resource not found')
+    expect(f.counts().executions).toBe(0)
+    await f.client.unsubscribeResource('test://removed')
+    await expect(f.client.callTool('change-state')).resolves.toBeDefined()
+    expect(f.subscriptions).toEqual(['test://removed', 'test://retained', 'test://removed', 'test://retained'])
     expect(f.counts()).toEqual({ initializes: 3, executions: 1 })
   })
 

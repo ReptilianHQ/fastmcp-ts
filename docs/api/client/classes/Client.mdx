@@ -160,7 +160,7 @@ complete(
    options?): Promise<CompletionResult>;
 ```
 
-Defined in: [client/client.ts:664](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L664)
+Defined in: [client/client.ts:675](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L675)
 
 #### Parameters
 
@@ -253,7 +253,7 @@ getPrompt(
 }>;
 ```
 
-Defined in: [client/client.ts:646](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L646)
+Defined in: [client/client.ts:657](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L657)
 
 #### Parameters
 
@@ -374,7 +374,7 @@ listPrompts(options?): Promise<{
 }[]>;
 ```
 
-Defined in: [client/client.ts:636](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L636)
+Defined in: [client/client.ts:647](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L647)
 
 #### Parameters
 
@@ -477,7 +477,7 @@ Defined in: [client/client.ts:442](https://github.com/PrefectHQ/fastmcp-ts/blob/
 notifyRootsChanged(): Promise<void>;
 ```
 
-Defined in: [client/client.ts:946](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L946)
+Defined in: [client/client.ts:957](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L957)
 
 Notify the connected server that the client's roots list has changed.
 The server should re-issue a roots/list request to get the updated list.
@@ -593,7 +593,7 @@ Returns the raw SDK ReadResourceResult without unwrapping.
 setLogLevel(level, options?): Promise<void>;
 ```
 
-Defined in: [client/client.ts:693](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L693)
+Defined in: [client/client.ts:704](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L704)
 
 Sets the minimum severity level for log messages sent by the server. On a
 legacy-era connection this sends the `logging/setLevel` RPC, unchanged. On
@@ -678,7 +678,7 @@ can never fire would fail silently instead.
 unsubscribeResource(uri, options?): Promise<void>;
 ```
 
-Defined in: [client/client.ts:580](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L580)
+Defined in: [client/client.ts:589](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/client/client.ts#L589)
 
 #### Parameters
 
