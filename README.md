@@ -3,6 +3,8 @@
 > This package is a public ReptilianHQ repack of PrefectHQ's `1.7.3` release.
 > It retains ReptilianHQ's `staticTokenVerifier` hardening, which rejects
 > inherited object-property names unless they are explicitly configured tokens.
+> The client also retires expired legacy HTTP sessions and initializes a fresh
+> connection for the next explicit request, without replaying failed operations.
 > Distribution is GitHub-only; upstream remains the primary project.
 
 The TypeScript framework for building [Model Context Protocol](https://modelcontextprotocol.io) servers, clients, and apps. The official TypeScript counterpart to [FastMCP for Python](https://github.com/PrefectHQ/fastmcp) - built and maintained with 💙 by the same team at [Prefect](https://prefect.io).
@@ -14,7 +16,7 @@ FastMCP 1.0 speaks both MCP protocol generations: the 2025 legacy era and the 20
 ## Installation
 
 ```bash
-npm install @reptilianhq/fastmcp-ts@https://github.com/ReptilianHQ/fastmcp-ts/releases/download/v1.7.3-reptilian.1/reptilianhq-fastmcp-ts-1.7.3-reptilian.1.tgz
+npm install @reptilianhq/fastmcp-ts@https://github.com/ReptilianHQ/fastmcp-ts/releases/download/v1.7.3-reptilian.2/reptilianhq-fastmcp-ts-1.7.3-reptilian.2.tgz
 ```
 
 ---

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.7.3-reptilian.2
+
+- Recover expired HTTP sessions without replaying failed operations or losing in-flight results.
+
 ## 1.7.3-reptilian.1
 
 ### Minor Changes
