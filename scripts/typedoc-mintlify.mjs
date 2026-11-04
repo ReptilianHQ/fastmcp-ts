@@ -12,6 +12,7 @@ export function load(app) {
     const pageDir = posix.dirname(page.url)
     const body = page.contents
       .replace(/^# .*\n+/, '')
+      .replace(/[ \t]+$/gm, '')
       .replace(/\]\(([^)\s]+)\.mdx(#[^)]*)?\)/g, (match, target, anchor = '') => {
         if (/^[a-z]+:\/\//i.test(target)) return match
         const resolved = posix.normalize(posix.join(pageDir, target))

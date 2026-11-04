@@ -2,66 +2,56 @@
 title: "ProtectedResourceConfig"
 ---
 
-Defined in: [server/FastMCP.ts:84](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L84)
+Defined in: [server/auth/remote.ts:25](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/remote.ts#L25)
 
-RFC 9728 discovery for an MCP resource backed by an external authorization server.
+Validated protected-resource settings that `run()` serves as metadata.
 
 ## Properties
 
 ### authorizationServers
 
 ```ts
-authorizationServers: URL[];
+readonly authorizationServers: readonly string[];
 ```
 
-Defined in: [server/FastMCP.ts:88](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L88)
+Defined in: [server/auth/remote.ts:27](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/remote.ts#L27)
 
-Authorization servers that issue tokens accepted by `auth`.
+***
+
+### baseUrl
+
+```ts
+readonly baseUrl: URL;
+```
+
+Defined in: [server/auth/remote.ts:26](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/remote.ts#L26)
+
+***
+
+### resourceDocumentation?
+
+```ts
+readonly optional resourceDocumentation?: string;
+```
+
+Defined in: [server/auth/remote.ts:30](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/remote.ts#L30)
 
 ***
 
 ### resourceName?
 
 ```ts
-optional resourceName?: string;
+readonly optional resourceName?: string;
 ```
 
-Defined in: [server/FastMCP.ts:92](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L92)
-
-Human-readable protected-resource name.
+Defined in: [server/auth/remote.ts:29](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/remote.ts#L29)
 
 ***
 
-### resourceUrl
+### scopesSupported?
 
 ```ts
-resourceUrl: URL;
+readonly optional scopesSupported?: readonly string[];
 ```
 
-Defined in: [server/FastMCP.ts:86](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L86)
-
-Public HTTPS URL of the MCP endpoint, including its path (HTTP is allowed on loopback).
-
-***
-
-### scopes?
-
-```ts
-optional scopes?: string[];
-```
-
-Defined in: [server/FastMCP.ts:90](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L90)
-
-RFC 6749 scope tokens understood by this resource server. An empty array is omitted.
-
-***
-
-### serviceDocumentationUrl?
-
-```ts
-optional serviceDocumentationUrl?: URL;
-```
-
-Defined in: [server/FastMCP.ts:94](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L94)
-
-Human-readable documentation for this protected resource.
+Defined in: [server/auth/remote.ts:28](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/auth/remote.ts#L28)

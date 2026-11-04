@@ -3,7 +3,7 @@ import { createServer, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import {
   AuthorizationError, FastMCP, introspectionVerifier, multiAuth,
-  staticTokenVerifier, VerificationUnavailableError,
+  staticTokenVerifier, VerificationUnavailableError, remoteAuth,
 } from 'fastmcp-ts/server'
 import type { RequestVerifier, TokenVerifier } from 'fastmcp-ts/server'
 import { connectHttpClient } from '../helpers/http'
@@ -31,13 +31,11 @@ async function fixture(reply: (res: ServerResponse) => void) {
 }
 
 async function serve(auth: TokenVerifier | RequestVerifier) {
-  const mcp = new FastMCP({
-    name: 'availability-test', auth,
-    protectedResource: {
-      resourceUrl: new URL('https://mcp.example.com/mcp'),
-      authorizationServers: [new URL('https://auth.example.com')],
-    },
-  })
+  const metadata = { baseUrl: 'https://mcp.example.com', authorizationServers: ['https://auth.example.com'] }
+  const external = 'verifyRequest' in auth
+    ? remoteAuth({ ...metadata, verifier: auth })
+    : remoteAuth({ ...metadata, verifier: auth })
+  const mcp = new FastMCP({ name: 'availability-test', auth: external })
   const executed = vi.fn(() => 'accepted')
   mcp.tool({ name: 'probe', description: 'Read a fixture value' }, executed)
   await mcp.run({ transport: 'http', host: '127.0.0.1', port: 0 })

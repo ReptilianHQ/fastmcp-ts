@@ -3,13 +3,13 @@ title: "CompleteCallback"
 ---
 
 ```ts
-type CompleteCallback = (value, context?) => 
+type CompleteCallback = (value, context?) =>
   | string[]
   | CompletionResult
   | Promise<string[] | CompletionResult>;
 ```
 
-Defined in: [server/completion.ts:48](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/completion.ts#L48)
+Defined in: [server/completion.ts:48](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/completion.ts#L48)
 
 A completion callback. Receives the partial `value` the user has typed and the
 optional resolved-argument `context`, and returns suggestions — either a bare

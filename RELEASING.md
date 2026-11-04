@@ -20,7 +20,7 @@ No npm account, npm token, repository secret, or trusted-publisher setup is
 used. The package is marked private to block npm publication. Release assets
 are immutable; rerunning the workflow for an existing release fails.
 
-The `1.7.3-reptilian.3` candidate adds `VerificationUnavailableError` for token
+The `1.9.0-reptilian.0` candidate adds `VerificationUnavailableError` for token
 and request verifiers. Introspection failures return HTTP 503 without a bearer
 challenge; explicit inactive-token verdicts remain 401. Retry guidance is
 validated and limited to five minutes. The regression suite covers both
@@ -30,7 +30,10 @@ reported in [upstream issue #144](https://github.com/PrefectHQ/fastmcp-ts/issues
 
 Custom verifiers and audit wrappers must preserve this error type when adopting
 the release. The library does not change consumer-specific credential policy.
-Existing expired-session recovery remains unchanged.
+Existing expired-session recovery remains unchanged. The upstream base is exactly
+`v1.9.0` (`b8d1e365b3352fb868e6b6b2678a5f5fe4e850a8`). External OAuth
+metadata now uses upstream `remoteAuth`; the fork-only `protectedResource` option
+is retired, and consumers must move their metadata configuration to that wrapper.
 
 ## Versioning
 

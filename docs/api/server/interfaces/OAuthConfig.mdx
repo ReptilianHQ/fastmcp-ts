@@ -2,7 +2,7 @@
 title: "OAuthConfig"
 ---
 
-Defined in: [server/FastMCP.ts:64](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L64)
+Defined in: [server/FastMCP.ts:66](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L66)
 
 ## Properties
 
@@ -12,7 +12,7 @@ Defined in: [server/FastMCP.ts:64](https://github.com/PrefectHQ/fastmcp-ts/blob/
 optional issuerUrl?: URL;
 ```
 
-Defined in: [server/FastMCP.ts:71](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L71)
+Defined in: [server/FastMCP.ts:73](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L73)
 
 Issuer URL for the OAuth server (used in metadata endpoints).
 Defaults to the HTTP server's bound address when not specified.
@@ -25,24 +25,9 @@ Defaults to the HTTP server's bound address when not specified.
 provider: OAuthServerProvider;
 ```
 
-Defined in: [server/FastMCP.ts:66](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L66)
+Defined in: [server/FastMCP.ts:68](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L68)
 
 OAuth server provider implementing the authorization and token flow.
-
-***
-
-### resourceUrl?
-
-```ts
-optional resourceUrl?: URL;
-```
-
-Defined in: [server/FastMCP.ts:78](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L78)
-
-Public URL of the MCP endpoint used as the RFC 9728 resource identifier.
-Must use HTTPS except on a loopback host. Defaults to `issuerUrl`'s origin
-plus the configured MCP path. Query strings are unsupported by the built-in
-OAuth router; use external `auth` with `protectedResource` when one is needed.
 
 ***
 
@@ -52,6 +37,6 @@ OAuth router; use external `auth` with `protectedResource` when one is needed.
 optional scopes?: string[];
 ```
 
-Defined in: [server/FastMCP.ts:80](https://github.com/PrefectHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L80)
+Defined in: [server/FastMCP.ts:75](https://github.com/ReptilianHQ/fastmcp-ts/blob/main/src/server/FastMCP.ts#L75)
 
 Scopes supported by this server, advertised in OAuth metadata.

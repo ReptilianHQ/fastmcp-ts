@@ -49,36 +49,7 @@ const server = new FastMCP({
 })
 ```
 
-The response maps the same way a JWT does: `client_id` to `clientId`, the space-delimited `scope` to `scopes`, `exp` to `expiresAt`, and the whole response body to `claims`. An explicit `active: false` verdict returns HTTP `401`. If introspection cannot establish a verdict, FastMCP returns `503` without a bearer challenge. This includes non-success HTTP responses, connection failures, timeouts, and malformed responses. The request does not reach a handler. Introspection has a five-second deadline, configurable through `timeoutMs`, and does not follow redirects. Valid upstream `Retry-After` guidance is converted to seconds and limited to five minutes.
-
-## External OAuth
-
-A verifier establishes whether a token is valid, while OAuth discovery tells an MCP client where to obtain one. When another service owns authorization, configure `protectedResource` alongside `auth`. FastMCP then serves RFC 9728 Protected Resource Metadata at the path derived from `resourceUrl` and includes that metadata URL in every Bearer `401` challenge. The metadata points clients directly to your authorization server; FastMCP continues to own only token verification.
-
-Use the public MCP endpoint as `resourceUrl`, including its `/mcp` path. This value becomes the OAuth resource identifier and must match the endpoint clients connect to. Production resource identifiers must use HTTPS; plain HTTP is accepted only for loopback development URLs. If the identifier contains a query, clients must request the generated metadata URL with that exact query. List each authorization server that issues tokens accepted by the configured verifier. Each `scopes` entry must be one RFC 6749 scope token; omit `scopes` or pass an empty array when the resource does not advertise any.
-
-```typescript server.ts
-import { FastMCP, jwtVerifier } from '@prefecthq/fastmcp-ts/server'
-
-const server = new FastMCP({
-  name: 'secure-server',
-  auth: jwtVerifier({
-    jwksUri: 'https://auth.example.com/.well-known/jwks.json',
-    issuer: 'https://auth.example.com',
-    audience: 'https://mcp.example.com/mcp',
-  }),
-  protectedResource: {
-    resourceUrl: new URL('https://mcp.example.com/mcp'),
-    authorizationServers: [new URL('https://auth.example.com')],
-    scopes: ['mcp:read', 'mcp:write'],
-    resourceName: 'Example MCP',
-  },
-})
-```
-
-The same configuration works with `introspectionVerifier` when the authorization server issues opaque tokens. `protectedResource` applies to the HTTP listener started by `run()`; a framework that embeds `server.fetch()` owns its authentication and discovery routes at that boundary.
-
-The bundled `oauth` server also advertises its MCP resource, but its `resourceUrl` cannot contain a query string. Use `auth` with `protectedResource` when the resource identifier needs one; that route requires clients to request the exact derived path and query.
+The response maps the same way a JWT does: `client_id` to `clientId`, the space-delimited `scope` to `scopes`, `exp` to `expiresAt`, and the whole response body to `claims`. An explicit `active: false` verdict returns HTTP `401`. When introspection cannot establish a verdict, FastMCP returns `503` without a bearer challenge. Non-success responses, connection failures, timeouts and malformed responses do not reach a handler. The default deadline is five seconds, configurable through `timeoutMs`. Redirects are refused. Valid `Retry-After` guidance is converted to seconds and limited to five minutes.
 
 ## Static tokens
 
@@ -128,6 +99,36 @@ const server = new FastMCP({
 ```
 
 Order the verifiers cheapest-first: each is only consulted when the ones before it reject, so putting the local static map ahead of a remote introspection call avoids a network round-trip for tokens the map already covers. Because every verifier yields the same `AccessToken` shape, the rest of your server — context, scope checks, per-component rules — never needs to know which one matched.
+
+## Authorization server discovery
+
+A verifier checks tokens, but a new MCP client has no token. It must first find which authorization server to use. [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) defines the answer: the server publishes protected resource metadata, a small JSON document that names the authorization servers it trusts. When you verify tokens from an external authorization server such as Auth0, Keycloak, or Okta, wrap your verifier with `remoteAuth` to publish this document.
+
+`remoteAuth` takes the verifier, the issuer URLs of your authorization servers, and the `baseUrl` of your server. It returns a verifier that behaves like the one you passed in, so you give it to the `auth` option as before. Over HTTP, the server then serves the metadata document at `/.well-known/oauth-protected-resource` followed by the MCP path. For the default `/mcp` path, that is `/.well-known/oauth-protected-resource/mcp`. The document needs no token. Every `401` response also carries a `WWW-Authenticate: Bearer` challenge. The challenge names the document in its `resource_metadata` parameter. If you set `scopesSupported`, the challenge also lists them in its `scope` parameter.
+
+```typescript server.ts
+import { FastMCP, remoteAuth, jwtVerifier } from '@prefecthq/fastmcp-ts/server'
+
+const server = new FastMCP({
+  name: 'secure-server',
+  auth: remoteAuth({
+    verifier: jwtVerifier({
+      jwksUri: 'https://auth.example.com/.well-known/jwks.json',
+      issuer: 'https://auth.example.com',
+      audience: 'https://mcp.example.com/mcp',
+    }),
+    authorizationServers: ['https://auth.example.com'],
+    baseUrl: 'https://mcp.example.com',
+    scopesSupported: ['read', 'write'],
+  }),
+})
+```
+
+Set `baseUrl` to the public URL that clients use, without the MCP path. FastMCP joins `baseUrl` and the MCP path to make the `resource` value in the document. If your server runs behind a reverse proxy, use the address of the proxy, not the address that the server binds to. The proxy must also forward the well-known path to the server unchanged. If `baseUrl` has a path, the well-known path includes it and starts at the root of the origin. For example, with `baseUrl: 'https://example.com/api'`, the document is at `https://example.com/.well-known/oauth-protected-resource/api/mcp`. A proxy that forwards only `/api/` does not forward this path. A client that cannot reach the document cannot find the authorization server.
+
+`remoteAuth` also accepts a [`RequestVerifier`](/servers/auth/trusted-proxy). The optional `resourceName` and `resourceDocumentation` fields add a display name and a documentation link to the document. `remoteAuth` throws at startup if `baseUrl` or an authorization server is not a valid `http` or `https` URL. It also throws if `authorizationServers` is empty.
+
+`remoteAuth` is for servers that verify tokens from another service. If you also set the [`oauth`](/servers/auth/oauth) option, `oauth` takes precedence and `remoteAuth` publishes nothing.
 
 ## Verification failures
 

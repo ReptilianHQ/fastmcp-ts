@@ -1,7 +1,7 @@
 import type { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import { hostHeaderValidation, originValidation } from "@modelcontextprotocol/node";
 import type { OAuthServerProvider } from "@modelcontextprotocol/server-legacy/auth";
-import { ProtocolError, ProtocolErrorCode, ResourceNotFoundError, Server, createMcpHandler, legacyStatelessFallback, isLegacyRequest, isJsonContentType, createRequestStateCodec, localhostAllowedHostnames, localhostAllowedOrigins, assertCompleteRequestPrompt, assertCompleteRequestResourceTemplate, getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode, ResourceNotFoundError, Server, createMcpHandler, legacyStatelessFallback, isLegacyRequest, isJsonContentType, createRequestStateCodec, localhostAllowedHostnames, localhostAllowedOrigins, getOAuthProtectedResourceMetadataUrl, assertCompleteRequestPrompt, assertCompleteRequestResourceTemplate } from "@modelcontextprotocol/server";
 import type { Transport, AuthInfo, ListToolsResult, GetPromptResult, CompleteRequestParams, CompleteResult, McpHttpHandler, LegacyHttpHandler, McpHandlerRequestOptions, CacheHint, RequestStateCodec, ServerContext, ServerEventBus } from "@modelcontextprotocol/server";
 
 // Not exported by @modelcontextprotocol/server (CacheableResultMethod is internal-only);
@@ -23,6 +23,8 @@ import { writeVerifierError } from './auth/httpError'
 import type { TokenVerifier, AccessToken } from './auth/types'
 import type { RequestVerifier } from './auth/types'
 import { isRequestVerifier } from './auth/types'
+import { getProtectedResource, protectedResourceRoute, bearerChallenge } from './auth/remote'
+import type { BearerChallengeConfig } from './auth/remote'
 import type { AuthCheck } from './auth/authorization'
 import { BoundedEventStore, LEGACY_SSE_RETRY_MS } from './legacyEventStore'
 import { contextStore, createContext, SESSION_CLOSE_CALLBACKS_KEY } from './context'
@@ -45,7 +47,7 @@ import {
   ResourceResult,
 } from './resource'
 import type { ResourceConfig } from './resource'
-import { UI_EXTENSION_KEY, UI_RESOURCE_MIME_TYPE, isUiCapable } from './apps/types'
+import { UI_EXTENSION_KEY, UI_RESOURCE_MIME_TYPE, shouldServeUi } from './apps/types'
 import type { UiToolMeta } from './apps/types'
 import { convertPromptResult, PromptResult } from './prompt'
 import type { PromptConfig } from './prompt'
@@ -69,29 +71,8 @@ export interface OAuthConfig {
    * Defaults to the HTTP server's bound address when not specified.
    */
   issuerUrl?: URL
-  /**
-   * Public URL of the MCP endpoint used as the RFC 9728 resource identifier.
-   * Must use HTTPS except on a loopback host. Defaults to `issuerUrl`'s origin
-   * plus the configured MCP path. Query strings are unsupported by the built-in
-   * OAuth router; use external `auth` with `protectedResource` when one is needed.
-   */
-  resourceUrl?: URL
   /** Scopes supported by this server, advertised in OAuth metadata. */
   scopes?: string[]
-}
-
-/** RFC 9728 discovery for an MCP resource backed by an external authorization server. */
-export interface ProtectedResourceConfig {
-  /** Public HTTPS URL of the MCP endpoint, including its path (HTTP is allowed on loopback). */
-  resourceUrl: URL
-  /** Authorization servers that issue tokens accepted by `auth`. */
-  authorizationServers: URL[]
-  /** RFC 6749 scope tokens understood by this resource server. An empty array is omitted. */
-  scopes?: string[]
-  /** Human-readable protected-resource name. */
-  resourceName?: string
-  /** Human-readable documentation for this protected resource. */
-  serviceDocumentationUrl?: URL
 }
 
 export interface FastMCPOptions {
@@ -101,19 +82,13 @@ export interface FastMCPOptions {
    * Bearer-token verifier, or a RequestVerifier for header-based
    * (trusted-proxy) deployments. See each type's docs. A RequestVerifier
    * applies to HTTP transports only; stdio's FASTMCP_CLI_AUTH_TOKEN needs a
-   * TokenVerifier. When both `oauth` and `auth` are set, `oauth` serves the
-   * endpoint and `auth` is ignored.
+   * TokenVerifier. Wrap either in `remoteAuth(...)` to also serve RFC 9728
+   * protected resource metadata over HTTP. When both `oauth` and `auth` are
+   * set, `oauth` serves the endpoint and `auth` is ignored.
    */
   auth?: TokenVerifier | RequestVerifier
   /** Full OAuth 2.1 server with Dynamic Client Registration support. */
   oauth?: OAuthConfig
-  /**
-   * RFC 9728 discovery for `auth` deployments whose authorization server is
-   * external. Serves path-correct Protected Resource Metadata and includes its
-   * URL in Bearer 401 challenges. Requires `auth` and cannot be combined with
-   * `oauth`, which publishes its own metadata.
-   */
-  protectedResource?: ProtectedResourceConfig
   /**
    * HTTP request context tuning for `ctx.http`. `redactHeaders` adds names to
    * the sensitive set withheld from `ctx.http.headers` (defaults:
@@ -411,118 +386,6 @@ function isLoopbackHost(host: string): boolean {
   return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]'
 }
 
-function assertHttpUrl(value: unknown, label: string, requireHttps: boolean): asserts value is URL {
-  if (!(value instanceof URL) || (value.protocol !== 'https:' && value.protocol !== 'http:')) {
-    throw new TypeError(`${label} must be an absolute HTTP(S) URL`)
-  }
-  if (value.hash) throw new TypeError(`${label} must not contain a fragment`)
-  if (requireHttps && value.protocol !== 'https:' && !isLoopbackHost(value.hostname)) {
-    throw new TypeError(`${label} must use HTTPS outside localhost`)
-  }
-}
-
-function resolveOAuthScopes(scopes: unknown, label: string): string[] | undefined {
-  if (scopes === undefined) return undefined
-  if (!Array.isArray(scopes)) throw new TypeError(`${label} must be an array of OAuth scope tokens`)
-  if (scopes.length === 0) return undefined
-  for (const [index, scope] of scopes.entries()) {
-    // RFC 6749 scope-token excludes spaces, controls, double quotes, and backslashes.
-    if (typeof scope !== 'string' || !/^[\x21\x23-\x5B\x5D-\x7E]+$/.test(scope)) {
-      throw new TypeError(`${label}[${index}] must be a valid OAuth scope token`)
-    }
-  }
-  return [...scopes]
-}
-
-function resolveProtectedResource(options: FastMCPOptions): ProtectedResourceConfig | undefined {
-  const config = options.protectedResource
-  if (!config) return undefined
-  if (!options.auth) throw new TypeError('protectedResource requires auth')
-  if (options.oauth) throw new TypeError('protectedResource cannot be combined with oauth')
-
-  assertHttpUrl(config.resourceUrl, 'protectedResource.resourceUrl', true)
-  if (!Array.isArray(config.authorizationServers) || config.authorizationServers.length === 0) {
-    throw new TypeError('protectedResource.authorizationServers must contain at least one URL')
-  }
-  config.authorizationServers.forEach((url, index) => {
-    assertHttpUrl(url, `protectedResource.authorizationServers[${index}]`, true)
-    if (url.search) {
-      throw new TypeError(`protectedResource.authorizationServers[${index}] must not contain a query string`)
-    }
-  })
-  if (config.serviceDocumentationUrl) {
-    assertHttpUrl(config.serviceDocumentationUrl, 'protectedResource.serviceDocumentationUrl', false)
-  }
-
-  return {
-    ...config,
-    resourceUrl: new URL(config.resourceUrl),
-    authorizationServers: config.authorizationServers.map((url) => new URL(url)),
-    scopes: resolveOAuthScopes(config.scopes, 'protectedResource.scopes'),
-    serviceDocumentationUrl: config.serviceDocumentationUrl
-      ? new URL(config.serviceDocumentationUrl)
-      : undefined,
-  }
-}
-
-function protectedResourceMetadataUrl(config: ProtectedResourceConfig): string {
-  return getOAuthProtectedResourceMetadataUrl(config.resourceUrl)
-}
-
-function bearerChallenge(config: ProtectedResourceConfig | undefined): string {
-  const metadata = config
-    ? `, resource_metadata="${protectedResourceMetadataUrl(config)}"`
-    : ''
-  return `Bearer realm="mcp"${metadata}`
-}
-
-function serveProtectedResourceMetadata(
-  req: IncomingMessage,
-  res: ServerResponse,
-  config: ProtectedResourceConfig,
-): boolean {
-  const requestUrl = new URL(req.url ?? '/', 'http://localhost')
-  const metadataUrl = new URL(protectedResourceMetadataUrl(config))
-  if (requestUrl.pathname !== metadataUrl.pathname || requestUrl.search !== metadataUrl.search) {
-    return false
-  }
-
-  const allow = 'GET, HEAD, OPTIONS'
-  if (req.method === 'OPTIONS') {
-    const requestedHeaders = req.headers['access-control-request-headers']
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': allow,
-      ...(requestedHeaders
-        ? { 'Access-Control-Allow-Headers': requestedHeaders, Vary: 'Access-Control-Request-Headers' }
-        : {}),
-    }).end()
-    return true
-  }
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    res.writeHead(405, {
-      Allow: allow,
-      'Access-Control-Allow-Origin': '*',
-      'Content-Type': 'application/json',
-    }).end(JSON.stringify({ error: 'method_not_allowed' }))
-    return true
-  }
-
-  const body = JSON.stringify({
-    resource: config.resourceUrl.href,
-    authorization_servers: config.authorizationServers.map((url) => url.href),
-    scopes_supported: config.scopes,
-    resource_name: config.resourceName,
-    resource_documentation: config.serviceDocumentationUrl?.href,
-  })
-  res.writeHead(200, {
-    'Access-Control-Allow-Origin': '*',
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(body),
-  }).end(req.method === 'HEAD' ? undefined : body)
-  return true
-}
-
 // Fired at most once per process: an HTTP serve on a routable host with no dnsRebinding
 // config at all. Any explicit dnsRebinding option (even `enabled: false`) suppresses the
 // warning — silence means the operator chose the open posture on purpose.
@@ -588,7 +451,6 @@ export class FastMCP {
   readonly _logger: ResolvedLogger
   private _cors: ResolvedCors | null
   private _oauth: OAuthConfig | undefined
-  private _protectedResource: ProtectedResourceConfig | undefined
   private _sensitiveHeaders: Set<string>
   private _toolsPageSize: number
   private _resourcesPageSize: number
@@ -597,6 +459,9 @@ export class FastMCP {
   private _templateResources = new Map<string, RegisteredResource>()
   private _prompts = new Map<string, RegisteredPrompt>()
   private _customRoutes = new CustomRouteRegistry()
+  // The metadata route that run() registers for remoteAuth; close() removes it
+  // so that a later run() can register it again.
+  private _protectedResourceRoutePath: string | null = null
   private _promptsPageSize: number
   private _middleware: Middleware[]
   private _transforms: Transform[]
@@ -647,7 +512,6 @@ export class FastMCP {
     this._auth = options.auth
     this._cors = resolveCors(options.http?.cors)
     this._oauth = options.oauth
-    this._protectedResource = resolveProtectedResource(options)
     this._sensitiveHeaders = resolveSensitiveHeaders(options.http)
     this._toolsPageSize = options.toolsPageSize ?? 50
     this._resourcesPageSize = options.resourcesPageSize ?? 50
@@ -744,7 +608,7 @@ export class FastMCP {
       const ctx = createContext(server, sdkCtx, token, sessionState, this._requestStateCodec, opts?.stateless, this._sensitiveHeaders, this._logger)
       return contextStore.run(ctx, () =>
         runMiddlewareChain(this._middleware, 'tools/list', req.params, ctx, async () => {
-          const clientIsUiCapable = isUiCapable(server.getClientCapabilities())
+          const clientIsUiCapable = shouldServeUi(server.getClientCapabilities())
 
           const allVisible = (
             await Promise.all(
@@ -930,12 +794,17 @@ export class FastMCP {
             let resultValue = await executePromise
             if (resolvedTool.config.output) resultValue = await validateInput(resolvedTool.config.output, resultValue)
             const callResult = convertResult(resultValue, opts?.stateless, this._logger)
-            // Graceful degradation: strip structuredContent for non-UI clients calling UI tools
-            if (resolvedTool.config.ui) {
-              const clientIsUi = isUiCapable(server.getClientCapabilities())
-              if (!clientIsUi && callResult.structuredContent !== undefined) {
-                return { content: [{ type: 'text' as const, text: '[UI not available in this client]' }] }
-              }
+            // Graceful degradation: a non-UI client gets the text fallback the Apps spec
+            // requires, which content already holds, so only the render payload is dropped.
+            // An output schema keeps structuredContent: the spec and the SDK client require it.
+            const uiGateClosed =
+              resolvedTool.config.ui !== undefined &&
+              !shouldServeUi(server.getClientCapabilities()) &&
+              !resolvedTool.config.output &&
+              !resolvedTool.config.outputSchema
+            if (uiGateClosed && callResult.structuredContent !== undefined) {
+              const { structuredContent: _dropped, ...textResult } = callResult
+              return textResult
             }
             return callResult
           }),
@@ -983,7 +852,7 @@ export class FastMCP {
               ? Buffer.from(page[page.length - 1].uri).toString('base64url')
               : undefined
 
-          const clientIsUiCapableRes = isUiCapable(server.getClientCapabilities())
+          const clientIsUiCapableRes = shouldServeUi(server.getClientCapabilities())
           return {
             resources: page.map((r) => ({
               uri: r.uri,
@@ -1088,7 +957,7 @@ export class FastMCP {
 
           const result = await executePromise
           const converted = convertResourceResult(result, requestedUri, resource!.config.mimeType, opts?.stateless)
-          return attachResourceUiMeta(converted, resource!.config.ui, isUiCapable(server.getClientCapabilities()))
+          return attachResourceUiMeta(converted, resource!.config.ui, shouldServeUi(server.getClientCapabilities()))
         }),
       )
     })
@@ -2145,11 +2014,34 @@ export class FastMCP {
                 }),
         )
       }
-      this._customRoutes.assertNoMcpCollision(path)
-      if (this._oauth) {
-        await this._runHttpOAuth(port, host, path)
-      } else {
-        await this._runHttpSimple(port, host, path)
+      const protectedResource = this._oauth ? undefined : getProtectedResource(this._auth)
+      let challenge: BearerChallengeConfig | undefined
+      if (protectedResource) {
+        const route = protectedResourceRoute(protectedResource, path)
+        // A custom route dispatches before auth, so clients can read the
+        // document without a token.
+        this._customRoutes.register({ path: route.path }, (request) =>
+          Response.json(route.metadata, {
+            headers: this._cors
+              ? corsResponseHeaders(this._cors, request.headers.get('origin') ?? undefined, this._logger)
+              : {},
+          }),
+        )
+        this._protectedResourceRoutePath = route.path
+        challenge = { resourceMetadataUrl: route.metadataUrl, scopes: protectedResource.scopesSupported }
+      }
+      try {
+        this._customRoutes.assertNoMcpCollision(path)
+        if (this._oauth) {
+          await this._runHttpOAuth(port, host, path)
+        } else {
+          await this._runHttpSimple(port, host, path, challenge)
+        }
+      } catch (err) {
+        // Remove the metadata route so a retry (for example after EADDRINUSE)
+        // does not fail on a duplicate path.
+        this._unregisterProtectedResourceRoute()
+        throw err
       }
     }
   }
@@ -2332,15 +2224,6 @@ export class FastMCP {
     )
 
     const oauth = this._oauth!
-    // Validate an operator-supplied public resource identifier before opening a
-    // listener. The default depends on the actual bound port and is validated below.
-    if (oauth.resourceUrl) {
-      assertHttpUrl(oauth.resourceUrl, 'oauth.resourceUrl', true)
-      if (oauth.resourceUrl.search) {
-        throw new TypeError('oauth.resourceUrl must not contain a query string')
-      }
-    }
-    const oauthScopes = resolveOAuthScopes(oauth.scopes, 'oauth.scopes')
     const app = express()
 
     // Global CORS preflight + MCP-endpoint headers, mirroring _runHttpSimple:
@@ -2389,17 +2272,18 @@ export class FastMCP {
 
     const bound = httpServer.address() as AddressInfo
     const issuerUrl = oauth.issuerUrl ?? new URL(`http://${bound.address}:${bound.port}`)
-    const resourceUrl = oauth.resourceUrl ?? new URL(path, issuerUrl)
-    assertHttpUrl(resourceUrl, 'oauth.resourceUrl', true)
-    const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(resourceUrl)
+
+    // Explicit URLs keep the metadata path-scoped independent of the SDK's defaults (typescript-sdk#2751).
+    const resourceServerUrl = new URL(path, issuerUrl)
+    const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(resourceServerUrl)
 
     // OAuth endpoints (authorize, token, register, metadata)
     app.use(
       mcpAuthRouter({
         provider: oauth.provider,
         issuerUrl,
-        scopesSupported: oauthScopes,
-        resourceServerUrl: resourceUrl,
+        resourceServerUrl,
+        scopesSupported: oauth.scopes,
       }),
     )
 
@@ -2420,22 +2304,19 @@ export class FastMCP {
     this._logger.listening(url)
   }
 
-  private async _runHttpSimple(port: number, host: string, path: string): Promise<void> {
+  private async _runHttpSimple(
+    port: number,
+    host: string,
+    path: string,
+    challenge?: BearerChallengeConfig,
+  ): Promise<void> {
     this._resolveDnsRebindingGuards(host)
     const { createServer } = await import('node:http')
 
     const auth = this._auth
     const cors = this._cors
-    const protectedResource = this._protectedResource
-    const challenge = bearerChallenge(protectedResource)
 
     const httpServer = createServer(async (req, res) => {
-      const pathname = req.url?.split('?')[0] ?? ''
-
-      // OAuth discovery stays public and owns its RFC 9728 route, including
-      // CORS and method handling, independently of the MCP endpoint's policy.
-      if (protectedResource && serveProtectedResourceMetadata(req, res, protectedResource)) return
-
       // CORS preflight — answered before custom routes, auth, and the
       // DNS-rebinding guards, exactly as before. Skipped entirely when
       // `http.cors` is `false`; OPTIONS then falls through like any method.
@@ -2447,6 +2328,7 @@ export class FastMCP {
       // Custom routes dispatch before the MCP path check, CORS injection, auth,
       // and the DNS-rebinding guards: a matched handler owns the whole exchange
       // (spec: docs/superpowers/specs/2026-08-10-health-endpoint-custom-routes-design.md).
+      const pathname = req.url?.split('?')[0] ?? ''
       const routeMatch = this._customRoutes.match(pathname, req.method ?? '')
       if (routeMatch) {
         if (routeMatch.kind === 'method-mismatch') writeMethodNotAllowed(res, routeMatch.allow)
@@ -2472,7 +2354,7 @@ export class FastMCP {
           try {
             accessToken = await auth.verifyRequest(nodeRequestToHttpContext(req))
           } catch (err) {
-            writeVerifierError(res, err, protectedResource ? challenge : undefined)
+            writeVerifierError(res, err, challenge ? bearerChallenge(challenge) : undefined)
             return
           }
           if (!accessToken.token) {
@@ -2501,7 +2383,10 @@ export class FastMCP {
 
           if (!bearer) {
             res
-              .writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': challenge })
+              .writeHead(401, {
+                'Content-Type': 'application/json',
+                'WWW-Authenticate': challenge ? bearerChallenge(challenge) : 'Bearer realm="mcp"',
+              })
               .end(JSON.stringify({ error: 'Missing bearer token' }))
             return
           }
@@ -2516,7 +2401,7 @@ export class FastMCP {
               extra: accessToken.claims,
             }
           } catch (err) {
-            writeVerifierError(res, err, challenge)
+            writeVerifierError(res, err, challenge ? bearerChallenge(challenge, 'invalid_token') : 'Bearer realm="mcp"')
             return
           }
         }
@@ -2571,6 +2456,7 @@ export class FastMCP {
       this._stdioModern = false
     }
 
+    this._unregisterProtectedResourceRoute()
     if (this._httpServer) {
       await new Promise<void>((resolve, reject) => {
         this._httpServer!.close((err) => (err != null ? reject(err) : resolve()))
@@ -2579,5 +2465,12 @@ export class FastMCP {
     }
     this._address = null
     await this._primaryServer.close()
+  }
+
+  private _unregisterProtectedResourceRoute(): void {
+    if (this._protectedResourceRoutePath) {
+      this._customRoutes.unregister(this._protectedResourceRoutePath)
+      this._protectedResourceRoutePath = null
+    }
   }
 }
