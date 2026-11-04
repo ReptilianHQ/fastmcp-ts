@@ -123,8 +123,9 @@ const scriptedToolCalls = Array.isArray(context.toolCalls) ? context.toolCalls :
 // stable: it is baked into the registered redirect_uri (DCR) and re-sent in the
 // authorization request, so the authorization server's redirect lands here.
 // Scenarios run one at a time (run-client.mjs enumerates them), so a single
-// fixed port never collides.
-const OAUTH_CALLBACK_PORT = 39876
+// fixed port is shared only by successive scenarios. Keep it below the usual
+// ephemeral ranges so discovery connections cannot consume it before bind.
+const OAUTH_CALLBACK_PORT = 18976
 
 /**
  * Discovers the authorization server's token endpoint for a client-credentials

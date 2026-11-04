@@ -12,6 +12,10 @@ if (git('rev-parse', '--is-shallow-repository') === 'true') {
 }
 git('fetch', '--no-tags', 'https://github.com/PrefectHQ/fastmcp-ts.git', `refs/tags/v${base}`);
 const upstream = git('rev-parse', 'FETCH_HEAD^{commit}');
+const notice = readFileSync(new URL('../NOTICE', import.meta.url), 'utf8');
+if (!notice.includes(`upstream FastMCP ${base}`) || !notice.includes(upstream)) {
+  throw new Error('NOTICE does not identify the verified upstream version and commit');
+}
 try {
   git('merge-base', '--is-ancestor', upstream, 'HEAD');
 } catch {
